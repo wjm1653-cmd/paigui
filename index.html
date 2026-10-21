@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.37">
+<html lang="zh-CN" data-ver="2026.1021.39">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.37</title>
+<title>智能排柜工具 v2026.1021.39</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.37</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.39</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -345,6 +345,9 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
         <label class="mode-opt"><input type="radio" name="mode" value="multi"><span>多柜自动分柜<br><i>装满一柜再开下一柜,支持手动微调</i></span></label>
       </div>
       <div id="prioWrap" style="margin-top:8px" hidden>
+        <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:8px;margin-bottom:6px">柜数
+          <input type="number" id="numCt" min="1" max="20" style="width:70px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px" placeholder="自动">
+          <span style="font-size:11px">不填=自动</span></label>
         <label style="font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:4px">同柜优先SPU(逗号同组·分号分组: 第1组→柜1, 第2组→柜2)
           <input type="text" id="prioSpus" placeholder="如: B24175-26;B24165K-26 (柜1集中B24175-26, 柜2集中B24165K-26)" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px">
         </label>
@@ -3276,7 +3279,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           }
         }
       }
-      var res = packContainerBest(container, pool, o2);
+      // 均衡: 本柜目标体积 = 剩余总量/预计剩余柜数(最后一柜不受限) → 各柜方数接近
+      var totRem = 0;
+      left.forEach(function (g) { if (g.qty > 0) totRem += g.l * g.w * g.h * g.qty; });
+      totRem /= 1e6;
+      var nEst = Math.max(1, Math.ceil(totRem / capM3 - 0.02));
+      var tgt = Math.min(capM3, totRem / nEst);
+      var o3 = o2;
+      if (nEst > 1 && tgt < capM3 - 0.3) {
+        var prioNeed = 0;
+        if (prio) prio.forEach(function () { });
+        if (prio) {
+          var pr2 = left.filter(function (g) { return prio.indexOf(g.id) >= 0; });
+          pr2.forEach(function (g) { prioNeed += g.l * g.w * g.h * g.qty / 1e6; });
+        }
+        var capUse = prio && prioNeed > tgt ? Math.min(capM3, prioNeed) : tgt; // 优先组整柜需求优先于均衡
+        o3 = Object.assign({}, o2, { volumeCap: capUse });
+      }
+      var res = packContainerBest(container, pool, o3);
       var placedAny = res.boxes.length > 0;
       if (!placedAny) {
         if (pool !== left) { prioActive = false; continue; } // 优先货一箱都装不下(异常) → 回退
@@ -3311,6 +3331,77 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           }
         }
         if (!stuffed) break;
+      }
+    }
+
+    // 末柜过小 → 尝试并入其他柜(防止均衡策略产生零碎小柜)
+    if (containers.length > 1) {
+      var volOfL = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+      var mg = 0;
+      while (containers.length > 1 && mg++ < 8) {
+        var lastC = containers[containers.length - 1];
+        if (volOfL(lastC) > capM3 * 0.55) break; // 不算零碎
+        var ok2 = true;
+        var boxes2 = lastC.boxes.slice();
+        for (var bi2 = 0; bi2 < boxes2.length && ok2; bi2++) {
+          var b5 = boxes2[bi2];
+          var put = false;
+          for (var cj = 0; cj < containers.length - 1 && !put; cj++) {
+            var cj2 = containers[cj];
+            var vj = 0;
+            cj2.boxes.forEach(function (b) { vj += b.l * b.w * b.h; });
+            var pl5 = fitPlacements(cj2.freeBoxes || [], b5.l, b5.w, b5.h, 1, capM3 * 1e6 - vj, 0)
+              .filter(function (p) { return isSupported(p, cj2.boxes); });
+            if (!pl5.length) continue;
+            var p5 = pl5[0];
+            var nb5 = { x: p5.x, y: p5.y, z: p5.z, l: p5.l, w: p5.w, h: p5.h, g: b5.g };
+            cj2.boxes.push(nb5);
+            cj2.freeBoxes = clipFree(cj2.freeBoxes || [], [nb5]);
+            put = true;
+          }
+          if (!put) ok2 = false;
+        }
+        if (ok2) { containers.pop(); lastC.boxes = []; }
+        else break;
+      }
+    }
+    // 柜间再平衡: 各柜体积尽量均衡(临时需求), 不动优先组集中货
+    if (containers.length > 1) {
+      var volOfC = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v; };
+      var rg = 0;
+      while (rg++ < 200) {
+        var vols = containers.map(volOfC);
+        var maxI = 0, minI = 0;
+        vols.forEach(function (v, i) { if (v > vols[maxI]) maxI = i; if (v < vols[minI]) minI = i; });
+        if (vols[maxI] - vols[minI] <= 1.2e6 || maxI === minI) break; // 差≤1.2m³即达标
+        var dc = containers[maxI], lc = containers[minI];
+        var locked = (prioGroups && prioGroups[maxI]) || null; // 优先组集中的箱不搬
+        var cand = dc.boxes.filter(function (b) { return !locked || locked.indexOf(b.g) < 0; })
+          .slice().sort(function (a, b) { return a.l * a.w * a.h - b.l * b.w * b.h; }); // 小箱先搬
+        var moved2 = false;
+        for (var ci2 = 0; ci2 < cand.length; ci2++) {
+          var b3 = cand[ci2];
+          if (!cand.some) break;
+          // 只搬顶层箱(上方无箱), 避免搬走后悬空
+          var blocked = dc.boxes.some(function (o) { return o !== b3 && o.z >= b3.z + b3.h - 0.5 && o.z < b3.z + b3.h + 0.5 && o.x < b3.x + b3.l - 0.5 && o.x + o.l > b3.x + 0.5 && o.y < b3.y + b3.w - 0.5 && o.y + o.w > b3.y + 0.5; });
+          if (blocked) continue;
+          var pl3 = fitPlacements(lc.freeBoxes || [], b3.l, b3.w, b3.h, 1, capM3 * 1e6 - volOfC(lc), 0)
+            .filter(function (p) { return isSupported(p, lc.boxes); });
+          if (!pl3.length) continue;
+          var p3 = pl3[0];
+          var nb = { x: p3.x, y: p3.y, z: p3.z, l: p3.l, w: p3.w, h: p3.h, g: b3.g };
+          lc.boxes.push(nb);
+          lc.freeBoxes = clipFree(lc.freeBoxes || [], [nb]);
+          dc.boxes.splice(dc.boxes.indexOf(b3), 1);
+          dc.freeBoxes = (function () {
+            var f0 = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+            dc.boxes.forEach(function (b4) { f0 = clipFree(f0, [b4]); });
+            return f0;
+          })();
+          moved2 = true;
+          break;
+        }
+        if (!moved2) break;
       }
     }
     return { containers: containers, unplaced: left.filter(function (g) { return g.qty > 0; }) };
@@ -3791,7 +3882,8 @@ function runPack(overrideAssign) {
       });
     }
     var multiCap = Math.min(parseFloat($('capVol').value) || 69.5, L * W * H / 1e6); // 多柜同样尊重"单柜体积上限"设置, 尽量装满
-    var all = PackLib.packAll({ L: L, W: W, H: H }, S.groups, 10, { volumeCap: multiCap, prioGroups: prioGroups.length ? prioGroups : null, prioIds: null });
+    var nCt = parseInt($('numCt') && $('numCt').value, 10) || 0; // 指定柜数(不填=自动)
+    var all = PackLib.packAll({ L: L, W: W, H: H }, S.groups, nCt > 0 ? nCt : 10, { volumeCap: multiCap, prioGroups: prioGroups.length ? prioGroups : null, prioIds: null });
     S.result = { containers: all.containers, unplaced: all.unplaced };
   }
   processResult();
