@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.48">
+<html lang="zh-CN" data-ver="2026.1021.49">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.48</title>
+<title>智能排柜工具 v2026.1021.49</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.48</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.49</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4020,7 +4020,14 @@ function processResult() {
       if (b.extra) { c.extrasByG[k] = (c.extrasByG[k] || 0) + 1; c.nExtra = (c.nExtra || 0) + 1; }
       c.nBoxes++;
     });
-    // 加塞建议: 订单全部装完后, 空隙还能额外装几箱什么(订单外)
+    // 加塞建议: 优先装订单, 救援后仍装不下的SKU不再建议加塞(自己没装完不建议多装)
+    var unplacedByG = {};
+    S.groups.forEach(function (g) {
+      var placedAll2 = 0;
+      S.result.containers.forEach(function (cc3) { cc3.boxes.forEach(function (b) { if (b.g === g.id) placedAll2++; }); });
+      var miss = Math.max(0, g.qty - placedAll2);
+      if (miss > 0) unplacedByG[g.id] = miss;
+    });
     c.suggestExtra = [];
     c.suggest = [];
     if (c.freeBoxes && c.freeBoxes.length && PackLib.fitCount) {
@@ -4029,7 +4036,7 @@ function processResult() {
       // 联合计算: 共享同一份空隙(先到先得), 建议数=全部一起加塞的真实可放数
       var sharedFree = c.freeBoxes.slice();
       var volRoom = capCm3 != null ? capCm3 - usedVol : null;
-      S.groups.slice().sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; }).forEach(function (g) {
+      S.groups.slice().filter(function (g) { return !unplacedByG[g.id]; }).sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; }).forEach(function (g) {
         var plS = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom)
           .filter(function (p) { return PackLib.isSupported(p, c.boxes); });
         var fit = plS.length;
