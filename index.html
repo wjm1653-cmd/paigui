@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.28">
+<html lang="zh-CN" data-ver="2026.1021.29">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.28</title>
+<title>智能排柜工具 v2026.1021.29</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.28</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.29</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -5100,14 +5100,25 @@ function loadShareData(d) {
   toast('已载入分享的排柜方案,播放动画中…');
 }
 /* shareUrl指向公网页面, 链接任何人可打开(可粘Excel) */
-$('btnGenShare').addEventListener('click', function () {
-  if (!S.result) return;
-  var url = shareUrl();
+function showShareLink(url, tag) {
   $('shareOut').hidden = false;
   $('shareUrl').value = url;
-  $('linkLen').textContent = '链接长度 ' + (url.length / 1024).toFixed(1) + ' KB';
+  $('linkLen').textContent = tag + ' · ' + url.length + ' 字符';
   var ok = function () { $('copyOk').textContent = '✓ 已复制,可粘到Excel/微信'; setTimeout(function () { $('copyOk').textContent = ''; }, 2600); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, function () {});
+}
+$('btnGenShare').addEventListener('click', function () {
+  if (!S.result) return;
+  var PUB = 'https://wjm1653-cmd.github.io/paigui/';
+  var longUrl = PUB + '#d=' + encodeShare(buildShareData());
+  // 优先短链接: 方案经本地服务上传到GitHub Gist, 链接只剩编号(约60字符); 服务不在/失败→回退长链接
+  fetch('/_pub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.orderName || '排柜方案', data: buildShareData() }) })
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (j) {
+      if (!j.id) throw 0;
+      showShareLink(PUB + '#g=' + j.id, '短链接');
+    })
+    .catch(function () { showShareLink(longUrl, '长链接(离线)'); });
 });
 $('btnCopyLink').addEventListener('click', function () {
   var ta = $('shareUrl');
@@ -5218,11 +5229,21 @@ function init() {
     toast('示例订单已载入,点击"开始排柜"');
   });
   $('btnPack').addEventListener('click', function () { runPack(); });
-  // 分享链接检测
-  var m = location.hash.match(/[#&]d=([^&]+)/);
-  if (m) {
-    try { loadShareData(decodeShare(m[1])); }
-    catch (e) { toast('分享链接数据无效', true); }
+  // 分享链接检测: #g=短链接(方案存GitHub Gist) / #d=长链接(数据内嵌)
+  var mg = location.hash.match(/[#&]g=([0-9a-f]+)/);
+  if (mg) {
+    toast('正在加载短链接方案…');
+    fetch('https://api.github.com/gists/' + mg[1]).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (j) {
+      var fkey = j.files && Object.keys(j.files)[0];
+      if (!fkey) throw 0;
+      loadShareData(JSON.parse(j.files[fkey].content));
+    }).catch(function () { toast('短链接加载失败(需要网络)', true); });
+  } else {
+    var m = location.hash.match(/[#&]d=([^&]+)/);
+    if (m) {
+      try { loadShareData(decodeShare(m[1])); }
+      catch (e) { toast('分享链接数据无效', true); }
+    }
   }
   // ?demo=1 → 自动载入示例并排柜(演示/自检用)
   if (/[?&]demo=1/.test(location.search)) {
