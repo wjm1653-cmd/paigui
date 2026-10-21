@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.49">
+<html lang="zh-CN" data-ver="2026.1021.50">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.49</title>
+<title>智能排柜工具 v2026.1021.50</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.49</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.50</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -2127,7 +2127,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       // 混装优先柜: 必须装下≥97%的优先货(硬约束), 其中体积最大者胜; 装不下时优先箱数最多者
       var prioPoolBoxes = 0;
       groups.forEach(function (g) { if (opts.prioIds.indexOf(g.id) >= 0) prioPoolBoxes += g.qty; });
-      var okRes = allRes.filter(function (x) { return x.pp >= prioPoolBoxes * 0.97; });
+      var okRes = allRes.filter(function (x) { return x.pp >= prioPoolBoxes * 0.94; }); // 94%: 留给几何咬合损耗, 100%集中交给溢出回填
       var pool2 = okRes.length ? okRes : allRes;
       if (okRes.length) pool2.sort(function (a, b) { return b.pv - a.pv || b.pp - a.pp; });
       else pool2.sort(function (a, b) { return b.pp - a.pp || b.pv - a.pv; });
@@ -3265,7 +3265,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       left.forEach(function (g) { if (g.qty > 0) totRem += g.l * g.w * g.h * g.qty; });
       totRem /= 1e6;
       var nEst = Math.max(1, Math.ceil(totRem / capM3 - 0.02));
-      var tgt = Math.min(capM3, totRem / nEst);
+      var tgt = Math.min(capM3, totRem / nEst + 1.5); // +1.5m³缓冲: 装箱必有损耗, 装不满就靠后续柜/回填补
       var o3 = o2;
       if (nEst > 1 && tgt < capM3 - 0.3) {
         var prioNeed = 0;
@@ -4037,8 +4037,16 @@ function processResult() {
       var sharedFree = c.freeBoxes.slice();
       var volRoom = capCm3 != null ? capCm3 - usedVol : null;
       S.groups.slice().filter(function (g) { return !unplacedByG[g.id]; }).sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; }).forEach(function (g) {
-        var plS = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom)
-          .filter(function (p) { return PackLib.isSupported(p, c.boxes); });
+        var plAll = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom);
+        // 逐箱落位: 支撑检查认"原有箱+本批已落箱", 允许新箱摞新箱(可码高)
+        var ghost = c.boxes.slice();
+        var plS = [];
+        plAll.forEach(function (p) {
+          if (PackLib.isSupported(p, ghost)) {
+            plS.push(p);
+            ghost.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
+          }
+        });
         var fit = plS.length;
         if (fit <= 0) return;
         if (volRoom != null) volRoom -= fit * g.l * g.w * g.h;
@@ -4075,13 +4083,16 @@ function stuffExtras() {
   var extraList = [];
 
   function placeAndClip(gid, g, want) {
-    var pl = PackLib.fitPlacements(c.freeBoxes, g.l, g.w, g.h, want, capCm3 != null ? capCm3 - usedVol : null)
-      .filter(function (p) { return PackLib.isSupported(p, c.boxes); }); // 不允许悬空
-    if (!pl.length) return 0;
-    pl.forEach(function (p) {
+    var plAll = PackLib.fitPlacements(c.freeBoxes, g.l, g.w, g.h, want, capCm3 != null ? capCm3 - usedVol : null);
+    var pl = [];
+    plAll.forEach(function (p) {
+      if (PackLib.isSupported(p, c.boxes)) { // 支撑: 原有箱+本批已放入的箱(可摞高)
+        pl.push(p);
         c.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gid, extra: true, sku: '(加塞)' });
-      usedVol += p.l * p.w * p.h;
+        usedVol += p.l * p.w * p.h;
+      }
     });
+    if (!pl.length) return 0;
     c.freeBoxes = PackLib.clipFree(c.freeBoxes, pl); // 逐SPU扣减空间, 互不重叠
     return pl.length;
   }
