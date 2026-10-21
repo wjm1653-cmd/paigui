@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.47">
+<html lang="zh-CN" data-ver="2026.1021.48">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.47</title>
+<title>智能排柜工具 v2026.1021.48</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.47</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.48</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3322,14 +3322,14 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             if (volRoom <= 0) continue;
             var exN = 0;
             c2.boxes.forEach(function (b) { if (b.g === g2.id) exN++; });
-            if (exN === 0 && g2.qty > 3) {
+            if (containers.length > 1 && exN === 0 && g2.qty > 3) {
               var whole = Math.min(fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0).filter(function (p) { return isSupported(p, c2.boxes); }).length, g2.qty);
               if (whole <= 3) continue; // 会形成≤3箱零头 → 不塞这柜
             }
             var pl2 = fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0)
               .filter(function (p) { return isSupported(p, c2.boxes); });
             if (!pl2.length) continue;
-            if (exN > 0 && exN + pl2.length <= 3) continue; // 塞完仍≤3零头 → 不塞
+            if (containers.length > 1 && exN > 0 && exN + pl2.length <= 3) continue; // 多柜时避免零头, 单柜塞满优先
             var newBoxes = pl2.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g2.id }; });
             newBoxes.forEach(function (b) { c2.boxes.push(b); g2.qty--; });
             c2.freeBoxes = clipFree(c2.freeBoxes || [], newBoxes);
@@ -3905,6 +3905,42 @@ function runPack(overrideAssign) {
 
   if (S.mode === 'single' && !overrideAssign) {
     var r = PackLib.packContainerBest({ L: L, W: W, H: H }, S.groups, { volumeCap: capVol });
+    var un0 = leftovers(S.groups, r).reduce(function (s, u) { return s + u.qty; }, 0);
+    if (un0 > 0) {
+      // 救援: 逐组当优先组硬约束重排, 取剩余最少/体积最大者, 最后回填零头
+      S.groups.forEach(function (pg) {
+        try {
+          var r2 = PackLib.packContainerBest({ L: L, W: W, H: H }, S.groups, { volumeCap: capVol, prioIds: [pg.id], prioFirst: true });
+          var un2 = leftovers(S.groups, r2).reduce(function (s, u) { return s + u.qty; }, 0);
+          var v1 = 0, v2 = 0;
+          r.boxes.forEach(function (b) { v1 += b.l * b.w * b.h; });
+          r2.boxes.forEach(function (b) { v2 += b.l * b.w * b.h; });
+          if (un2 < un0 || (un2 === un0 && v2 > v1)) { r = r2; un0 = un2; }
+        } catch (e) { }
+      });
+      var remR = {};
+      S.groups.forEach(function (g) { remR[g.id] = g.qty; });
+      r.boxes.forEach(function (b) { remR[b.g]--; });
+      var gR = 0;
+      while (gR++ < 100) {
+        var gidsR = Object.keys(remR).map(Number).filter(function (id) { return remR[id] > 0; });
+        if (!gidsR.length) break;
+        var placedR = false;
+        for (var giR = 0; giR < gidsR.length && !placedR; giR++) {
+          var g3 = S.groups[gidsR[giR]];
+          var vR = 0;
+          r.boxes.forEach(function (b) { vR += b.l * b.w * b.h; });
+          var plR = PackLib.fitPlacements(r.freeBoxes || [], g3.l, g3.w, g3.h, remR[g3.id], capVol * 1e6 - vR, 0)
+            .filter(function (p) { return PackLib.isSupported(p, r.boxes); });
+          if (!plR.length) continue;
+          var nbR = plR.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g3.id }; });
+          nbR.forEach(function (b) { r.boxes.push(b); remR[b.g]--; });
+          r.freeBoxes = PackLib.clipFree(r.freeBoxes || [], nbR);
+          placedR = true;
+        }
+        if (!placedR) break;
+      }
+    }
     S.result = { containers: [r], unplaced: leftovers(S.groups, r) };
   } else if (overrideAssign) {
     var cs = [];
