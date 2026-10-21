@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.29">
+<html lang="zh-CN" data-ver="2026.1021.30">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.29</title>
+<title>智能排柜工具 v2026.1021.30</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.29</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.30</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -5111,14 +5111,20 @@ $('btnGenShare').addEventListener('click', function () {
   if (!S.result) return;
   var PUB = 'https://wjm1653-cmd.github.io/paigui/';
   var longUrl = PUB + '#d=' + encodeShare(buildShareData());
-  // 优先短链接: 方案经本地服务上传到GitHub Gist, 链接只剩编号(约60字符); 服务不在/失败→回退长链接
-  fetch('/_pub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.orderName || '排柜方案', data: buildShareData() }) })
-    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-    .then(function (j) {
-      if (!j.id) throw 0;
-      showShareLink(PUB + '#g=' + j.id, '短链接');
-    })
-    .catch(function () { showShareLink(longUrl, '长链接(离线)'); });
+  // 短链接: 方案经本地服务上传到GitHub Gist, 链接只剩编号(约60字符); 自动重试, 全部失败才回退长链接
+  var tryPub = function (retries) {
+    fetch('/_pub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.orderName || '排柜方案', data: buildShareData() }) })
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (j) {
+        if (!j.id) throw 0;
+        showShareLink(PUB + '#g=' + j.id, '短链接');
+      })
+      .catch(function () {
+        if (retries > 0) setTimeout(function () { tryPub(retries - 1); }, 1200);
+        else showShareLink(longUrl, '长链接(短链接服务暂不可用)');
+      });
+  };
+  tryPub(2);
 });
 $('btnCopyLink').addEventListener('click', function () {
   var ta = $('shareUrl');
