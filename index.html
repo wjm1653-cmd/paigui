@@ -3849,8 +3849,7 @@ function processResult() {
       if (b.extra) { c.extrasByG[k] = (c.extrasByG[k] || 0) + 1; c.nExtra = (c.nExtra || 0) + 1; }
       c.nBoxes++;
     });
-    // 建议(受体积上限约束)分两档: ①订单余货可挪入本柜(最高优先) ②订单外还可加装
-    c.suggestOrder = [];
+    // 加塞建议: 订单全部装完后, 空隙还能额外装几箱什么(订单外)
     c.suggestExtra = [];
     c.suggest = [];
     if (c.freeBoxes && c.freeBoxes.length && PackLib.fitCount) {
@@ -3859,21 +3858,10 @@ function processResult() {
       S.groups.forEach(function (g) {
         var fit = PackLib.fitCount(c.freeBoxes, g.l, g.w, g.h, 60, capCm3, usedVol);
         if (fit <= 0) return;
-        var inThis = c.summary[g.id] ? c.summary[g.id].n : 0;
-        var orderRemain = Math.max(0, g.qty - inThis); // 订单余货(在其他柜/未装)
-        var fitOrder = Math.min(fit, orderRemain);
-        if (fitOrder > 0) c.suggestOrder.push({ spu: g.spu, gid: g.id, n: fitOrder, l: g.l, w: g.w, h: g.h, vol: g.l * g.w * g.h });
-        if (fit - fitOrder > 0) c.suggestExtra.push({ spu: g.spu, gid: g.id, n: fit - fitOrder, l: g.l, w: g.w, h: g.h, vol: g.l * g.w * g.h });
+        c.suggestExtra.push({ spu: g.spu, gid: g.id, n: fit, l: g.l, w: g.w, h: g.h, vol: g.l * g.w * g.h }); // 仅订单外加装建议
       });
-      c.suggestOrder.sort(function (a, b) { return b.n * b.vol - a.n * a.vol; });
-      c.suggestExtra.sort(function (a, b) { return b.n * b.vol - a.n * a.vol; });
-      c.suggest = c.suggestOrder.concat(c.suggestExtra);
-      // 优先规则: 订单余货<=5箱 且 加塞方数更大 → 加塞优先
-      var remainBoxes = 0;
-      S.groups.forEach(function (g) { remainBoxes += Math.max(0, g.qty - (c.summary[g.id] ? c.summary[g.id].n : 0)); });
-      var orderVol = c.suggestOrder.reduce(function (t, x) { return t + x.n * x.vol; }, 0);
-      var extraVol = c.suggestExtra.reduce(function (t, x) { return t + x.n * x.vol; }, 0);
-      c.extrasFirst = remainBoxes <= 5 && extraVol > orderVol;
+      c.suggestExtra.sort(function (a, b) { return b.n * b.vol - a.n * b.vol; });
+      c.suggest = c.suggestExtra;
     }
   });
   // 按实际装载重建"未装"清单(挪入/加塞后保持一致)
@@ -3884,12 +3872,11 @@ function processResult() {
     .map(function (g) { return { id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: g.qty - (placedAll[g.id] || 0) }; });
 }
 
-/* 加塞开关: 勾上=先挪入订单余货(从其他柜), 再订单外加装; 取消=全部恢复
- * 例外规则: 订单余货<=5箱 且 加塞能装更多方数 → 加塞优先 */
+/* 加塞开关: 勾上=按建议把订单外的箱加塞进本柜空隙; 取消勾选=全部恢复 */
 function stuffExtras() {
   var c = S.result.containers[S.curC];
   if (!c) return;
-  if (!c.suggestOrder.length && !c.suggestExtra.length && !S.result._origAll) return;
+  if (!c.suggestExtra.length && !S.result._origAll) return;
   if (!S.result._origAll) {
     S.result._origAll = {
       boxes: S.result.containers.map(function (cc) { return cc.boxes.slice(); }),
@@ -3900,65 +3887,43 @@ function stuffExtras() {
   }
   var capCm3 = S.capVol != null ? S.capVol * 1e6 : null;
   var usedVol = c.boxes.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
-  var movedList = [], extraList = [];
+  var extraList = [];
 
-  function placeAndClip(gid, g, want, isOrderMove) {
+  function placeAndClip(gid, g, want) {
     var pl = PackLib.fitPlacements(c.freeBoxes, g.l, g.w, g.h, want, capCm3 != null ? capCm3 - usedVol : null)
       .filter(function (p) { return PackLib.isSupported(p, c.boxes); }); // 不允许悬空
     if (!pl.length) return 0;
     pl.forEach(function (p) {
-      if (isOrderMove) {
-        c.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gid, moved: true, sku: g.skus[0].sku });
-      } else {
         c.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gid, extra: true, sku: '(加塞)' });
-      }
       usedVol += p.l * p.w * p.h;
     });
     c.freeBoxes = PackLib.clipFree(c.freeBoxes, pl); // 逐SPU扣减空间, 互不重叠
     return pl.length;
   }
-  function doOrderPhase() {
-    c.suggestOrder.forEach(function (so) {
-      var g = S.groups[so.gid];
-      var n = placeAndClip(so.gid, g, so.n, true);
-      if (!n) return;
-      var need = n;
-      for (var ci = 0; ci < S.result.containers.length && need > 0; ci++) {
-        var cc = S.result.containers[ci];
-        if (cc === c) continue;
-        for (var bi = cc.boxes.length - 1; bi >= 0 && need > 0; bi--) {
-          if (cc.boxes[bi].g === so.gid) { cc.boxes.splice(bi, 1); need--; }
-        }
-      }
-      movedList.push(g.spu + '×' + n + '箱');
-    });
-  }
-  function doExtraPhase() {
-    c.suggestExtra.forEach(function (se) {
-      var g = S.groups[se.gid];
-      var n = placeAndClip(se.gid, g, se.n, false);
-      if (n) extraList.push(g.spu + '×' + n + '箱');
-    });
-  }
-  // 执行顺序: 默认订单余货优先; 余货<=5箱且加塞方数更大时 → 加塞优先
-  if (c.extrasFirst) { doExtraPhase(); doOrderPhase(); }
-  else { doOrderPhase(); doExtraPhase(); }
+  c.suggestExtra.forEach(function (se) {
+    var g = S.groups[se.gid];
+    var nn = placeAndClip(se.gid, g, se.n);
+    if (nn) extraList.push(g.spu + '×' + nn + '箱');
+  });
 
-  if (!movedList.length && !extraList.length) return toast('剩余空间塞不下任何建议箱', true);
+  if (!extraList.length) return toast('剩余空间塞不下任何建议箱', true);
   S.result.containers.forEach(function (cc) {
     var vol = 0, mx = 0;
     cc.boxes.forEach(function (b) { vol += b.l * b.w * b.h; if (b.x + b.l > mx) mx = b.x + b.l; });
     cc.volumeUtil = vol / (S.cont.L * S.cont.W * S.cont.H);
     cc.usedLength = mx;
   });
-  c.freeBoxes = [];
+  S.result.containers.forEach(function (cc) {
+    var f0 = [{ x: 0, y: 0, z: 0, l: S.cont.L, w: S.cont.W, h: S.cont.H }];
+    cc.boxes.forEach(function (b) { f0 = PackLib.clipFree(f0, [b]); });
+    cc.freeBoxes = f0;
+  });
   processResult();
   buildViewer(); updateStats(); buildLegend(); buildDetail();
   buildContainerTabs();
   resetPlayback(); setShown(V.meshes.length);
   S.playing = false; $('btnPlay').textContent = '▶';
   var parts = [];
-  if (movedList.length) parts.push('已挪入订单余货: ' + movedList.join('、'));
   if (extraList.length) parts.push('已加装(订单外): ' + extraList.join('、'));
   toast(parts.join(' | '));
 }
@@ -3967,7 +3932,7 @@ function toggleExtras() {
   if (!c) return;
   var on = $('chkExtra') && $('chkExtra').checked;
   if (on) {
-    if (!c.nExtra && !c.boxes.some(function (b) { return b.moved; })) stuffExtras();
+    if (!c.nExtra) stuffExtras();
   } else if (S.result._origAll) {
     S.result.containers.forEach(function (cc, i) {
       cc.boxes = S.result._origAll.boxes[i].slice();
@@ -4094,7 +4059,7 @@ function updateStats() {
   // 加塞开关(醒目): 有建议或已加塞时显示在面板最上方
   if ((c.suggest && c.suggest.length) || c.nExtra) {
     html += '<div class="stat-item" style="padding:0"><label class="extra-toggle' + (c.nExtra ? ' on' : '') + '">' +
-      '<input type="checkbox" id="chkExtra" onchange="toggleExtras()" ' + (c.nExtra ? 'checked' : '') + '>⚡ 按建议加塞排进' + (c.nExtra ? '(已加塞' + c.nExtra + '箱)' : '') + '</label></div>';
+      '<input type="checkbox" id="chkExtra" onchange="toggleExtras()" ' + (c.nExtra ? 'checked' : '') + '>⚡ 按建议加塞排进' + (c.nExtra ? '(已加塞' + c.nExtra + '箱·取消勾选恢复)' : '') + '</label></div>';
   }
   html +=
     '<div class="stat-item"><div class="sl">体积利用率(柜' + (S.curC + 1) + ')</div><div class="sv">' + (c.volumeUtil * 100).toFixed(1) + '%<small> ' + fmt(vol) + '/' + fmt(cap) + ' m³</small></div><div class="util-bar"><div style="width:' + (c.volumeUtil * 100).toFixed(1) + '%"></div></div></div>' +
@@ -4111,24 +4076,7 @@ function updateStats() {
     }
   }
   // 加装建议明细(两档, 开关在面板顶部)
-  if (c.suggest && c.suggest.length) {
-    if (c.suggestOrder && c.suggestOrder.length) {
-      html += '<div class="stat-item ok"><div class="sl">📦 订单余货可挪入本柜(优先)</div><div style="font-size:12.5px;line-height:1.8">' +
-        c.suggestOrder.map(function (x) { return '<b>' + esc(x.spu) + ' +' + x.n + '箱</b> <span style="color:var(--dim)">' + fmtNum(x.l) + '*' + fmtNum(x.w) + '*' + fmtNum(x.h) + '</span>'; }).join('<br>') + '</div></div>';
-    }
-    if (c.suggestExtra && c.suggestExtra.length) {
-      html += '<div class="stat-item ok"><div class="sl">💡 订单外还可加装' + (c.extrasFirst ? '(余货≤5箱·加塞优先)' : '') + '</div><div style="font-size:12.5px;line-height:1.8">' +
-        c.suggestExtra.map(function (x) { return '<b>' + esc(x.spu) + ' +' + x.n + '箱</b> <span style="color:var(--dim)">' + fmtNum(x.l) + '*' + fmtNum(x.w) + '*' + fmtNum(x.h) + '</span>'; }).join('<br>') + '</div></div>';
-    }
-  }
-  // 已加塞明细
-  if (c.nExtra) {
-    var exLines = [];
-    Object.keys(c.extrasByG).map(Number).forEach(function (gid) {
-      exLines.push('<span style="color:var(--ok)">' + esc(S.groups[gid].spu) + ' +' + c.extrasByG[gid] + '箱(已排进)</span>');
-    });
-    html += '<div class="stat-item ok"><div class="sl">✓ 已加塞排进(半透明箱)</div><div style="font-size:12.5px;line-height:1.8">' + exLines.join('<br>') + '</div></div>';
-  }
+  
   html += '<div class="stat-item"><div class="sl">柜型内径</div><div class="sv" style="font-size:15px">' + S.cont.L + ' × ' + S.cont.W + ' × ' + S.cont.H + '<small> cm</small></div></div>';
   box.innerHTML = html;
 }
@@ -4623,11 +4571,8 @@ function buildDetail() {
         Object.keys(c.extrasByG).map(Number).map(function (gid) { return '<b style="color:var(--ok)">' + esc(S.groups[gid].spu) + ' +' + c.extrasByG[gid] + '箱</b>'; }).join(' 、') + '</div>';
     } else if (c.suggest && c.suggest.length) {
       var dl = [];
-      if (c.suggestOrder && c.suggestOrder.length) {
-        dl.push('📦 订单余货可挪入本柜: ' + c.suggestOrder.map(function (x) { return '<b style="color:var(--ok)">' + esc(x.spu) + ' +' + x.n + '箱</b>'; }).join(' 、'));
-      }
       if (c.suggestExtra && c.suggestExtra.length) {
-        dl.push('💡 订单外可加装' + (c.extrasFirst ? '(余货≤5箱·加塞优先)' : '') + ': ' + c.suggestExtra.map(function (x) { return '<b style="color:var(--ok)">' + esc(x.spu) + ' +' + x.n + '箱</b>'; }).join(' 、'));
+        dl.push('💡 订单外还可加装(填满空隙): ' +  c.suggestExtra.map(function (x) { return '<b style="color:var(--ok)">' + esc(x.spu) + ' +' + x.n + '箱</b>'; }).join(' 、'));
       }
       html += '<div style="margin-top:10px;font-size:12.5px;color:var(--dim)">' + dl.join('<br>') + '(在3D视图右侧勾选「⚡按建议加塞排进」即可执行)。</div>';
     }
