@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.27">
+<html lang="zh-CN" data-ver="2026.1021.28">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.27</title>
+<title>智能排柜工具 v2026.1021.28</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.27</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.28</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -444,7 +444,19 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
       <!-- 分享 -->
       <div class="tab-pane" id="pane-share" hidden>
         <div class="share-card">
-          <h3>📤 发同事(跨网络·单文件)</h3>
+          <h3>🔗 分享链接(公网·任何人可开)</h3>
+          <p>链接指向公网页面+内嵌全部排柜数据,<b>可粘到Excel/微信</b>,任何城市的同事点开即看动画+明细。</p>
+          <button id="btnGenShare" class="btn primary">生成分享链接</button>
+          <div id="shareOut" class="share-out" hidden>
+            <textarea id="shareUrl" readonly rows="3"></textarea>
+            <div class="share-actions">
+              <button id="btnCopyLink" class="btn primary">复制链接</button>
+              <span id="copyOk" class="copy-ok"></span>
+              <span id="linkLen" class="link-len"></span>
+            </div>
+          </div>
+          <hr>
+          <h3>📤 发同事(单文件备用)</h3>
           <p>生成一个<b>自带排柜方案</b>的单文件HTML,微信/QQ发给任何城市的同事,对方<b>双击即看</b>装柜动画+明细,无需网络、无需安装。</p>
           <button id="btnExportSingle" class="btn primary">📤 导出"发同事"单文件</button>
           <span id="singleOk" class="copy-ok"></span>
@@ -5047,7 +5059,7 @@ function decodeShare(str) {
   return JSON.parse(json);
 }
 function shareUrl() {
-  var base = location.href.split('#')[0];
+  var base = 'https://wjm1653-cmd.github.io/paigui/'; // 公网页面(同事跨网络可打开), 数据在#d=里随身携带
   return base + '#d=' + encodeShare(buildShareData());
 }
 function loadShareData(d) {
@@ -5087,7 +5099,23 @@ function loadShareData(d) {
   showResult(true); // 分享链接打开: 自动播放装柜动画
   toast('已载入分享的排柜方案,播放动画中…');
 }
-/* shareUrl/encodeShare 保留为内部函数(导出单文件用), 生成链接的UI已按需求移除: 本地链接跨网络打不开,统一走「导出发同事单文件」 */
+/* shareUrl指向公网页面, 链接任何人可打开(可粘Excel) */
+$('btnGenShare').addEventListener('click', function () {
+  if (!S.result) return;
+  var url = shareUrl();
+  $('shareOut').hidden = false;
+  $('shareUrl').value = url;
+  $('linkLen').textContent = '链接长度 ' + (url.length / 1024).toFixed(1) + ' KB';
+  var ok = function () { $('copyOk').textContent = '✓ 已复制,可粘到Excel/微信'; setTimeout(function () { $('copyOk').textContent = ''; }, 2600); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, function () {});
+});
+$('btnCopyLink').addEventListener('click', function () {
+  var ta = $('shareUrl');
+  ta.select();
+  var ok = function () { $('copyOk').textContent = '✓ 已复制'; setTimeout(function () { $('copyOk').textContent = ''; }, 2000); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(ok, function () { document.execCommand('copy'); ok(); });
+  else { document.execCommand('copy'); ok(); }
+});
 $('btnExportJson').addEventListener('click', function () {
   if (!S.result) return;
   var blob = new Blob([JSON.stringify(buildShareData())], { type: 'application/json' });
