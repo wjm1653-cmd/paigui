@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.40">
+<html lang="zh-CN" data-ver="2026.1021.41">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.40</title>
+<title>智能排柜工具 v2026.1021.41</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.40</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.41</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4164,7 +4164,7 @@ function updateStats() {
   html +=
     '<div class="stat-item"><div class="sl">体积利用率(柜' + (S.curC + 1) + ')</div><div class="sv">' + (c.volumeUtil * 100).toFixed(1) + '%<small> ' + fmt(vol) + '/' + fmt(cap) + ' m³</small></div><div class="util-bar"><div style="width:' + (c.volumeUtil * 100).toFixed(1) + '%"></div></div></div>' +
     (S.capVol != null ? '<div class="stat-item' + (vol > S.capVol + 0.001 ? ' warn' : '') + '"><div class="sl">📦 体积上限规则(不超' + S.capVol + '方)</div><div class="sv" style="font-size:17px">' + fmt(Math.min(vol, 99.9)) + '<small> / ' + S.capVol + ' m³</small></div><div class="util-bar"><div style="width:' + Math.min(100, vol / S.capVol * 100).toFixed(1) + '%;background:' + (vol > S.capVol + 0.001 ? 'var(--bad)' : 'linear-gradient(90deg,#2f81f7,#4da3ff)') + '"></div></div></div>' : '') +
-    '<div class="stat-item"><div class="sl">已装箱数</div><div class="sv">' + c.nBoxes + '<small> / ' + totalQty + ' 箱</small>' + (c.nExtra ? '<small style="color:var(--ok)"> 含加塞' + c.nExtra + '</small>' : '') + '</div></div>' +
+    '<div class="stat-item"><div class="sl">已装箱数</div><div class="sv">' + c.nBoxes + '<small> / ' + totalQty + ' 箱</small>' + '</div></div>' +
     '<div class="stat-item"><div class="sl">长度占用</div><div class="sv">' + fmt(c.usedLength, 0) + '<small> / ' + S.cont.L + ' cm</small></div><div class="util-bar"><div style="width:' + Math.min(100, c.usedLength / S.cont.L * 100).toFixed(1) + '%"></div></div></div>' +
     '<div class="stat-item"><div class="sl">SPU(三级/箱规)数</div><div class="sv">' + spuCount + '</div></div>';
   // 未装提示(直观)
@@ -4277,7 +4277,7 @@ function buildSpuLabelOverlay() {
     clusters.sort(function (a, b) { return b.length - a.length; });
     var g = S.groups[gid];
     var isSplit = clusters.length > 1;
-    var extra = (c.extrasByG && c.extrasByG[gid]) ? ' 含加塞' + c.extrasByG[gid] : '';
+    var extra = ''; // 标注不再显示含加塞数(只显示总箱数)
     var col = new THREE.Color(gColor(gid));
     var wxSum = 0, wzSum = 0;
     clusters.forEach(function (cl, ci) {
