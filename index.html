@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.39">
+<html lang="zh-CN" data-ver="2026.1021.40">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.39</title>
+<title>智能排柜工具 v2026.1021.40</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.39</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.40</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3947,15 +3947,19 @@ function processResult() {
     if (c.freeBoxes && c.freeBoxes.length && PackLib.fitCount) {
       var capCm3 = S.capVol != null ? S.capVol * 1e6 : null;
       var usedVol = c.boxes.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
-      S.groups.forEach(function (g) {
-        // 按实际可放置计算(须有支撑不悬空), 避免建议数虚高
-        var plS = PackLib.fitPlacements(c.freeBoxes, g.l, g.w, g.h, 60, capCm3 != null ? capCm3 - usedVol : null)
+      // 联合计算: 共享同一份空隙(先到先得), 建议数=全部一起加塞的真实可放数
+      var sharedFree = c.freeBoxes.slice();
+      var volRoom = capCm3 != null ? capCm3 - usedVol : null;
+      S.groups.slice().sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; }).forEach(function (g) {
+        var plS = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom)
           .filter(function (p) { return PackLib.isSupported(p, c.boxes); });
         var fit = plS.length;
         if (fit <= 0) return;
+        if (volRoom != null) volRoom -= fit * g.l * g.w * g.h;
+        sharedFree = PackLib.clipFree(sharedFree, plS);
         c.suggestExtra.push({ spu: g.spu, gid: g.id, n: fit, l: g.l, w: g.w, h: g.h, vol: g.l * g.w * g.h }); // 仅订单外加装建议
       });
-      c.suggestExtra.sort(function (a, b) { return b.n * b.vol - a.n * b.vol; });
+      // 保持联合计算顺序(大箱先), 执行时所见即所得
       c.suggest = c.suggestExtra;
     }
   });
