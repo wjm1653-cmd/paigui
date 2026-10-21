@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.41">
+<html lang="zh-CN" data-ver="2026.1021.42">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.41</title>
+<title>智能排柜工具 v2026.1021.42</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.41</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.42</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -449,7 +449,10 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
         <div class="share-card">
           <h3>🔗 分享链接(公网·任何人可开)</h3>
           <p>链接指向公网页面+内嵌全部排柜数据,<b>可粘到Excel/微信</b>,任何城市的同事点开即看动画+明细。</p>
-          <button id="btnGenShare" class="btn primary">生成分享链接</button>
+          <div class="share-actions" style="margin:10px 0">
+            <button id="btnGenShare" class="btn primary">生成分享链接(加塞版)</button>
+            <button id="btnGenSharePlain" class="btn ghost">不加塞版</button>
+          </div>
           <div id="shareOut" class="share-out" hidden>
             <textarea id="shareUrl" readonly rows="3"></textarea>
             <div class="share-actions">
@@ -5179,6 +5182,9 @@ function loadShareData(d) {
     c.usedLength = mx;
   });
   S.shared = true;
+  // 只读模式: 同事打开只能看, 不能编辑
+  var sp = $('sidePanel'); if (sp) sp.style.display = 'none';
+  var bd = $('btnDrag'); if (bd) { bd.disabled = true; bd.title = '分享链接为只读'; }
   S.items = [];
   S.groups.forEach(function (g) { g.skus.forEach(function (x) { S.items.push({ sku: x.sku, l: g.l, w: g.w, h: g.h, qty: x.qty }); }); });
   loadItems(S.items); // 分享打开也能看到订单预览并重新排柜
@@ -5193,25 +5199,35 @@ function showShareLink(url, tag) {
   var ok = function () { $('copyOk').textContent = '✓ 已复制,可粘到Excel/微信'; setTimeout(function () { $('copyOk').textContent = ''; }, 2600); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, function () {});
 }
-$('btnGenShare').addEventListener('click', function () {
+function genShareLink(withExtra) {
   if (!S.result) return;
+  // 不加塞版: 临时取原始(未加塞)箱位生成, 完事还原
+  var stash = null;
+  if (!withExtra && S.result._origAll) {
+    stash = S.result.containers.map(function (cc) { return cc.boxes; });
+    S.result.containers.forEach(function (cc, i) { cc.boxes = S.result._origAll.boxes[i].slice(); });
+  }
+  var data = buildShareData();
+  if (stash) S.result.containers.forEach(function (cc, i) { cc.boxes = stash[i]; });
+  var tag = withExtra ? '加塞版' : '不加塞版';
   var PUB = 'https://wjm1653-cmd.github.io/paigui/';
-  var longUrl = PUB + '#d=' + encodeShare(buildShareData());
-  // 短链接: 方案经本地服务上传到GitHub Gist, 链接只剩编号(约60字符); 自动重试, 全部失败才回退长链接
+  var longUrl = PUB + '#d=' + encodeShare(data);
   var tryPub = function (retries) {
-    fetch('/_pub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.orderName || '排柜方案', data: buildShareData() }) })
+    fetch('/_pub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: (S.orderName || '排柜方案') + '·' + tag, data: data }) })
       .then(function (r) { if (!r.ok) throw 0; return r.json(); })
       .then(function (j) {
         if (!j.id) throw 0;
-        showShareLink(PUB + '#g=' + j.id + '&n=' + encodeURIComponent(S.orderName || '排柜方案'), '短链接');
+        showShareLink(PUB + '#g=' + j.id + '&n=' + encodeURIComponent((S.orderName || '排柜方案') + (withExtra ? '' : '(不加塞)')), '短链接·' + tag);
       })
       .catch(function () {
         if (retries > 0) setTimeout(function () { tryPub(retries - 1); }, 1200);
-        else showShareLink(longUrl, '长链接(短链接服务暂不可用)');
+        else showShareLink(longUrl, '长链接·' + tag + '(短链接服务暂不可用)');
       });
   };
   tryPub(2);
-});
+}
+$('btnGenShare').addEventListener('click', function () { genShareLink(true); });
+$('btnGenSharePlain').addEventListener('click', function () { genShareLink(false); });
 $('btnCopyLink').addEventListener('click', function () {
   var ta = $('shareUrl');
   ta.select();
