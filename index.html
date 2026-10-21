@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.31">
+<html lang="zh-CN" data-ver="2026.1021.32">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.31</title>
+<title>智能排柜工具 v2026.1021.32</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.31</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.32</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -345,8 +345,8 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
         <label class="mode-opt"><input type="radio" name="mode" value="multi"><span>多柜自动分柜<br><i>装满一柜再开下一柜,支持手动微调</i></span></label>
       </div>
       <div id="prioWrap" style="margin-top:8px" hidden>
-        <label style="font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:4px">同柜优先SPU(逗号分隔,第1柜尽量集中装这些)
-          <input type="text" id="prioSpus" placeholder="如: B24175,B25015,D25156..." style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px">
+        <label style="font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:4px">同柜优先SPU(逗号同组·分号分组: 第1组→柜1, 第2组→柜2)
+          <input type="text" id="prioSpus" placeholder="如: B24175-26;B24165K-26 (柜1集中B24175-26, 柜2集中B24165K-26)" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px">
         </label>
       </div>
       <button id="btnPack" class="btn primary big" disabled>🚚 开始排柜</button>
@@ -3236,13 +3236,20 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var left = groups.map(function (g) { return { id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: g.qty }; });
     var containers = [];
     // 同柜优先: opts.prioIds(组id集合) → 优先货量足时专柜集中; 不足一柜时混装但加权先装(集中在前两柜)
-    var prio = opts && opts.prioIds && opts.prioIds.length ? opts.prioIds : null;
-    var prioActive = !!prio;
+    // opts.prioGroups(多组, 每组对应一柜): 第i柜尽量集中装第i组(临时需求: 多组各自集中)
+    var prioGroups = opts && opts.prioGroups || null;
+    var prioLegacy = opts && opts.prioIds && opts.prioIds.length ? opts.prioIds : null;
+    var prioActive = !!prioLegacy;
     var capM3 = (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6);
     while (left.some(function (g) { return g.qty > 0; }) && containers.length < maxContainers) {
       var pool = left;
       var o2 = opts;
-      if (prioActive) {
+      var prio = null;
+      if (prioGroups) {
+        var pg = prioGroups[containers.length];
+        if (pg && left.some(function (g) { return pg.indexOf(g.id) >= 0 && g.qty > 0; })) prio = pg;
+      } else if (prioActive) prio = prioLegacy;
+      if (prio) {
         var pr = left.filter(function (g) { return prio.indexOf(g.id) >= 0 && g.qty > 0; });
         if (!pr.length) prioActive = false;
         else {
@@ -3259,11 +3266,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             var nonPri = pool2.filter(function (g) { return prio.indexOf(g.id) < 0; })
               .sort(function (a, b) { return b.l * b.w * b.h * b.qty - a.l * a.w * a.h * b.qty; }); // 大组先移出(留小箱填隙)
             for (var ni = 0; ni < nonPri.length && tot2 > capM3 + 2.5; ni++) {
-              tot2 -= nonPri[ni].l * nonPri[ni].w * nonPri[ni].h * nonPri[ni].qty / 1e6;
+              var gv = nonPri[ni].l * nonPri[ni].w * nonPri[ni].h * nonPri[ni].qty / 1e6;
+              if (tot2 - gv < capM3 - 0.5) continue; // 移掉后装不满一柜 → 保留(宁可池大, 装载按cap截断)
+              tot2 -= gv;
               pool2.splice(pool2.indexOf(nonPri[ni]), 1);
             }
             pool = pool2;
-            o2 = Object.assign({}, opts, { prioFirst: true });
+            o2 = Object.assign({}, opts, { prioFirst: true, prioIds: prio });
           }
         }
       }
@@ -3740,17 +3749,21 @@ function runPack(overrideAssign) {
     }
     S.result = { containers: cs.filter(Boolean), unplaced: leftoversMulti(S.groups, overrideAssign) };
   } else {
-    // 多柜模式: 每柜体积控制在 67~68.8m³(按用户要求); 同柜优先SPU: 逗号分隔(前缀匹配), 第1柜集中装
-    var prioIds = [];
+    // 多柜模式: 每柜体积控制在 67~68.8m³(按用户要求); 同柜优先SPU【临时需求】: 逗号=同组, 分号=分组(第1组→柜1, 第2组→柜2…)
+    var prioGroups = [];
     var pv = ($('prioSpus') && $('prioSpus').value.trim()) || '';
     if (pv) {
-      var names = pv.split(/[,，\s]+/).filter(Boolean);
-      S.groups.forEach(function (g) {
-        if (names.some(function (nm) { return g.spu === nm || g.spu.indexOf(nm) === 0; })) prioIds.push(g.id);
+      pv.split(/[;；]+/).filter(Boolean).forEach(function (seg) {
+        var names = seg.split(/[,，\s]+/).filter(Boolean);
+        var ids = [];
+        S.groups.forEach(function (g) {
+          if (names.some(function (nm) { return g.spu === nm || g.spu.indexOf(nm) === 0; })) ids.push(g.id);
+        });
+        if (ids.length) prioGroups.push(ids);
       });
     }
     var multiCap = Math.min(67.9, L * W * H / 1e6); // 每柜≤67.9方: 总量均摊后每柜落在67-68.8区间
-    var all = PackLib.packAll({ L: L, W: W, H: H }, S.groups, 10, { volumeCap: multiCap, prioIds: prioIds.length ? prioIds : null });
+    var all = PackLib.packAll({ L: L, W: W, H: H }, S.groups, 10, { volumeCap: multiCap, prioGroups: prioGroups.length ? prioGroups : null, prioIds: null });
     S.result = { containers: all.containers, unplaced: all.unplaced };
   }
   processResult();
