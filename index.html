@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.46">
+<html lang="zh-CN" data-ver="2026.1021.47">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.46</title>
+<title>智能排柜工具 v2026.1021.47</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.46</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.47</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3951,6 +3951,11 @@ function leftoversMulti(groups, assign) {
 
 /* 给每箱分配子SKU(同组内按顺序消耗) + 序号 */
 function processResult() {
+  // 真实装柜顺序: 从柜子里头(x小)往柜门(x大), 由下往上堆 — 动画/装箱单/分享均按此顺序
+  (S.result && S.result.containers || []).forEach(function (c) {
+    c.boxes.sort(function (a, b) { return a.x - b.x || a.z - b.z || a.y - b.y; });
+    c.boxes.forEach(function (b, i) { b.idx = i + 1; });
+  });
   S.result.containers.forEach(function (c) {
     // 统一按真实装卸顺序排列: 由里到外(距柜头近的先), 同位置先下后上 → 动画/明细/装箱单一致
     c.boxes.sort(function (a, b) { return a.x - b.x || a.z - b.z || a.y - b.y; });
