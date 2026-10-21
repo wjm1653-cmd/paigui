@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.34">
+<html lang="zh-CN" data-ver="2026.1021.35">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.34</title>
+<title>智能排柜工具 v2026.1021.35</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.34</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.35</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4059,7 +4059,8 @@ function updateStats() {
   // 加塞开关(醒目): 有建议或已加塞时显示在面板最上方
   if ((c.suggest && c.suggest.length) || c.nExtra) {
     html += '<div class="stat-item" style="padding:0"><label class="extra-toggle' + (c.nExtra ? ' on' : '') + '">' +
-      '<input type="checkbox" id="chkExtra" onchange="toggleExtras()" ' + (c.nExtra ? 'checked' : '') + '>⚡ 按建议加塞排进' + (c.nExtra ? '(已加塞' + c.nExtra + '箱·取消勾选恢复)' : '') + '</label></div>';
+      '<input type="checkbox" id="chkExtra" onchange="toggleExtras()" ' + (c.nExtra ? 'checked' : '') + '>⚡ 按建议加塞排进' + (c.nExtra ? '(已加塞' + c.nExtra + '箱·取消勾选恢复)' : '') + '</label>' +
+      (c.nExtra ? '' : '<div style="padding:4px 10px 6px;font-size:11.5px;color:var(--dim)">建议: ' + c.suggestExtra.slice(0, 4).map(function (x) { return esc(x.spu) + ' +' + x.n + '箱'; }).join(' 、') + (c.suggestExtra.length > 4 ? ' 等' : '') + '</div>') + '</div>';
   }
   html +=
     '<div class="stat-item"><div class="sl">体积利用率(柜' + (S.curC + 1) + ')</div><div class="sv">' + (c.volumeUtil * 100).toFixed(1) + '%<small> ' + fmt(vol) + '/' + fmt(cap) + ' m³</small></div><div class="util-bar"><div style="width:' + (c.volumeUtil * 100).toFixed(1) + '%"></div></div></div>' +
