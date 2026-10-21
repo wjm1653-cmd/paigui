@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.45">
+<html lang="zh-CN" data-ver="2026.1021.46">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.45</title>
+<title>智能排柜工具 v2026.1021.46</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.45</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.46</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3284,6 +3284,25 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         break;
       }
       containers.push(res);
+      // 防碎: 本柜某组只装1~3箱且该组还有余量 → 退回留给后续柜(尽量不出现一个SKU在柜里只有零头)
+      var fragIds = [];
+      left.forEach(function (g) {
+        if (res.placed[g.id] > 0 && res.placed[g.id] <= 3 && g.qty > 3) fragIds.push(g.id);
+      });
+      if (fragIds.length && containers.length < maxContainers) {
+        var keep = [];
+        res.boxes.forEach(function (b) {
+          if (fragIds.indexOf(b.g) >= 0) return; // 退回
+          keep.push(b);
+        });
+        fragIds.forEach(function (fid) { left.forEach(function (g) { if (g.id === fid) g.qty += res.placed[fid]; }); });
+        res.placed = {};
+        keep.forEach(function (b) { res.placed[b.g] = (res.placed[b.g] || 0) + 1; });
+        res.boxes = keep;
+        var f0 = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+        keep.forEach(function (b) { f0 = clipFree(f0, [b]); });
+        res.freeBoxes = f0;
+      }
       left.forEach(function (g) { if (res.placed[g.id]) g.qty -= res.placed[g.id]; });
     }
     // 回填加塞: 未装箱尽量塞进已排好的柜(不超cap+0.5m³, 见缝插针)
@@ -3301,9 +3320,16 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             c2.boxes.forEach(function (b) { v2 += b.l * b.w * b.h; });
             var volRoom = (capM3 + 0.5) * 1e6 - v2;
             if (volRoom <= 0) continue;
+            var exN = 0;
+            c2.boxes.forEach(function (b) { if (b.g === g2.id) exN++; });
+            if (exN === 0 && g2.qty > 3) {
+              var whole = Math.min(fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0).filter(function (p) { return isSupported(p, c2.boxes); }).length, g2.qty);
+              if (whole <= 3) continue; // 会形成≤3箱零头 → 不塞这柜
+            }
             var pl2 = fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0)
               .filter(function (p) { return isSupported(p, c2.boxes); });
             if (!pl2.length) continue;
+            if (exN > 0 && exN + pl2.length <= 3) continue; // 塞完仍≤3零头 → 不塞
             var newBoxes = pl2.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g2.id }; });
             newBoxes.forEach(function (b) { c2.boxes.push(b); g2.qty--; });
             c2.freeBoxes = clipFree(c2.freeBoxes || [], newBoxes);
@@ -3331,6 +3357,13 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             var cj2 = containers[cj];
             var vj = 0;
             cj2.boxes.forEach(function (b) { vj += b.l * b.w * b.h; });
+            var ex5 = 0;
+            cj2.boxes.forEach(function (o) { if (o.g === b5.g) ex5++; });
+            if (ex5 === 0) {
+              var tot5 = 0;
+              lastC.boxes.forEach(function (o) { if (o.g === b5.g) tot5++; });
+              if (tot5 > 3) continue; // 会留下≤3箱零头 → 换下一柜
+            }
             var pl5 = fitPlacements(cj2.freeBoxes || [], b5.l, b5.w, b5.h, 1, capM3 * 1e6 - vj, 0)
               .filter(function (p) { return isSupported(p, cj2.boxes); });
             if (!pl5.length) continue;
@@ -3360,12 +3393,21 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         var cand = dc.boxes.filter(function (b) { return !locked || locked.indexOf(b.g) < 0; })
           .slice().sort(function (a, b) { return a.l * a.w * a.h - b.l * b.w * b.h; }); // 小箱先搬
         var moved2 = false;
+        for (var pass = 0; pass < 2 && !moved2; pass++) {
         for (var ci2 = 0; ci2 < cand.length; ci2++) {
           var b3 = cand[ci2];
+          if (pass === 0) {
+            var exR = 0;
+            lc.boxes.forEach(function (o) { if (o.g === b3.g) exR++; });
+            if (exR === 0) continue; // 第一轮: 只搬接收柜已有的组
+          }
           if (!cand.some) break;
           // 只搬顶层箱(上方无箱), 避免搬走后悬空
           var blocked = dc.boxes.some(function (o) { return o !== b3 && o.z >= b3.z + b3.h - 0.5 && o.z < b3.z + b3.h + 0.5 && o.x < b3.x + b3.l - 0.5 && o.x + o.l > b3.x + 0.5 && o.y < b3.y + b3.w - 0.5 && o.y + o.w > b3.y + 0.5; });
           if (blocked) continue;
+          var dn = 0;
+          dc.boxes.forEach(function (o) { if (o.g === b3.g) dn++; });
+          if (dn - 1 >= 1 && dn - 1 <= 3) continue; // 搬走后donor剩1~3箱零头 → 不搬
           var pl3 = fitPlacements(lc.freeBoxes || [], b3.l, b3.w, b3.h, 1, capM3 * 1e6 - volOfC(lc), 0)
             .filter(function (p) { return isSupported(p, lc.boxes); });
           if (!pl3.length) continue;
@@ -3382,7 +3424,34 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           moved2 = true;
           break;
         }
+        }
         if (!moved2) break;
+      }
+    }
+    // 兜底: 防碎规则可能导致个别箱没去处 → 无视零头硬塞, 优先不剩箱
+    if (containers.length && left.some(function (g) { return g.qty > 0; })) {
+      var g9 = 0;
+      while (g9++ < 200) {
+        var rem9 = left.filter(function (g) { return g.qty > 0; });
+        if (!rem9.length) break;
+        var done9 = false;
+        for (var gi9 = 0; gi9 < rem9.length && !done9; gi9++) {
+          var gg = rem9[gi9];
+          for (var ci9 = 0; ci9 < containers.length; ci9++) {
+            var c9 = containers[ci9];
+            var v9 = 0;
+            c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
+            var pl9 = fitPlacements(c9.freeBoxes || [], gg.l, gg.w, gg.h, gg.qty, capM3 * 1e6 + 5e5 - v9, 0)
+              .filter(function (p) { return isSupported(p, c9.boxes); });
+            if (!pl9.length) continue;
+            var nb9 = pl9.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gg.id }; });
+            nb9.forEach(function (b) { c9.boxes.push(b); gg.qty--; });
+            c9.freeBoxes = clipFree(c9.freeBoxes || [], nb9);
+            done9 = true;
+            break;
+          }
+        }
+        if (!done9) break;
       }
     }
     return { containers: containers, unplaced: left.filter(function (g) { return g.qty > 0; }) };
@@ -5331,6 +5400,21 @@ function exportExcel() {
         ws[cl] = { t: 'n', f: '=' + fr[cix].replace(/([A-Z])(\d+)/g, function (m, col, num) { return col + (ri + 1); }), s: { font: FONT(11, +cix === 13 || +cix === 18 || +cix === 19 || +cix === 20), border: BD, alignment: CENTER, numFmt: NUMF[+cix] || 'General' } };
       }
     }
+    for (var ri = 3; ri < n; ri++) {
+      var F = [
+        [9, 'F{r}*G{r}*H{r}/1000000'],
+        [10, 'L{r}*I{r}'],
+        [13, 'M{r}*L{r}'],
+        [18, 'L{r}*J{r}'],
+        [19, 'D{r}*L{r}'],
+        [20, 'E{r}*L{r}']
+      ];
+      F.forEach(function (pair) {
+        var fx = pair[1].replace(/\{r\}/g, String(ri + 1));
+        var bold = pair[0] === 13 || pair[0] === 18 || pair[0] === 19 || pair[0] === 20;
+        ws[XLSX.utils.encode_cell({ r: ri, c: pair[0] })] = { t: 'n', v: 0, f: fx, s: { font: FONT(11, bold), border: BD, alignment: CENTER, numFmt: NUMF[pair[0]] || 'General' } };
+      });
+    }
     var range = { s: { r: 0, c: 0 }, e: { r: n - 1, c: 20 } };
     for (var rr2 = range.s.r; rr2 <= range.e.r; rr2++) for (var cc2 = 0; cc2 <= 20; cc2++) {
       var ad = XLSX.utils.encode_cell({ r: rr2, c: cc2 });
@@ -5339,7 +5423,7 @@ function exportExcel() {
       if (rr2 === 0) cel.s = { font: FONT(24, true), alignment: { horizontal: 'center', vertical: 'center' } };
       else if (rr2 === 1) cel.s = { font: FONT(11), alignment: CENTER };
       else if (rr2 === 2) cel.s = { font: FONT(11, true), fill: GREEN, border: BD, alignment: CENTER };
-      else cel.s = { font: FONT(cel && cel.t === 's' && cc2 === 2 ? 12 : 11), border: BD, alignment: CENTER, numFmt: NUMF[cc2] || 'General' };
+      else cel.s = { font: FONT(cel && cel.t === 's' && cc2 === 2 ? 12 : 11, cc2 === 13 || cc2 === 18 || cc2 === 19 || cc2 === 20), border: BD, alignment: CENTER, numFmt: NUMF[cc2] || 'General' };
     }
     ws['!cols'] = COLW.map(function (w) { return { wch: w }; });
     ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 20 } }, { s: { r: 2, c: 5 }, e: { r: 2, c: 7 } }, { s: { r: 1, c: 18 }, e: { r: 1, c: 20 } }];
