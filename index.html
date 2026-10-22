@@ -4045,6 +4045,7 @@ function processResult() {
         var sharedFree = c.freeBoxes.slice();
         var volRoom = capCm3 != null ? capCm3 - usedVol : null;
         var suggN = {};
+        var seq3 = [];
         for (var round2 = 0; round2 < 4; round2++) {
           var added2 = false;
           pool3.slice().sort(ofn).forEach(function (g) {
@@ -4060,6 +4061,7 @@ function processResult() {
             if (!plS.length) return;
             if (volRoom != null) volRoom -= plS.length * g.l * g.w * g.h;
             sharedFree = PackLib.clipFree(sharedFree, plS);
+            if (!suggN[g.id]) seq3.push(g.id);
             suggN[g.id] = (suggN[g.id] || 0) + plS.length;
             added2 = true;
           });
@@ -4072,10 +4074,10 @@ function processResult() {
           tn3 += suggN[gid3];
         });
         if (!best3 || tv3 > best3.tv + 1e-9 || (Math.abs(tv3 - best3.tv) < 1e-9 && tn3 > best3.tn)) {
-          best3 = { suggN: suggN, tv: tv3, tn: tn3 };
+          best3 = { suggN: suggN, tv: tv3, tn: tn3, seq: seq3 };
         }
       });
-      Object.keys(best3.suggN).map(Number).sort(function (a4, b4) { return best3.suggN[b4] * S.groups[b4].l * S.groups[b4].w * S.groups[b4].h - best3.suggN[a4] * S.groups[a4].l * S.groups[a4].w * S.groups[a4].h; }).forEach(function (gid2) {
+      best3.seq.forEach(function (gid2) { // 按获胜顺序的先后执行, 保证所见即所得
         var g2b = S.groups[gid2];
         c.suggestExtra.push({ spu: g2b.spu, gid: gid2, n: best3.suggN[gid2], l: g2b.l, w: g2b.w, h: g2b.h, vol: g2b.l * g2b.w * g2b.h });
       });
