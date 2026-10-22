@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.51">
+<html lang="zh-CN" data-ver="2026.1021.52">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.51</title>
+<title>智能排柜工具 v2026.1021.52</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.51</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.52</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4033,25 +4033,51 @@ function processResult() {
     if (c.freeBoxes && c.freeBoxes.length && PackLib.fitCount) {
       var capCm3 = S.capVol != null ? S.capVol * 1e6 : null;
       var usedVol = c.boxes.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
-      // 联合计算: 共享同一份空隙(先到先得), 建议数=全部一起加塞的真实可放数
-      var sharedFree = c.freeBoxes.slice();
-      var volRoom = capCm3 != null ? capCm3 - usedVol : null;
-      S.groups.slice().filter(function (g) { return !unplacedByG[g.id]; }).sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; }).forEach(function (g) {
-        var plAll = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom);
-        // 逐箱落位: 支撑检查认"原有箱+本批已落箱", 允许新箱摞新箱(可码高)
-        var ghost = c.boxes.slice();
-        var plS = [];
-        plAll.forEach(function (p) {
-          if (PackLib.isSupported(p, ghost)) {
-            plS.push(p);
-            ghost.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
-          }
+      // 联合计算: 共享空隙, 三种顺序(大箱优先/小箱优先/数量优先)各算一遍, 取总方数最大者(小箱常能塞更多)
+      var ORDERS3 = [
+        function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; },
+        function (a, b) { return a.l * a.w * a.h - b.l * b.w * b.h; },
+        function (a, b) { return b.qty - a.qty; }
+      ];
+      var pool3 = S.groups.slice().filter(function (g) { return !unplacedByG[g.id]; });
+      var best3 = null;
+      ORDERS3.forEach(function (ofn) {
+        var sharedFree = c.freeBoxes.slice();
+        var volRoom = capCm3 != null ? capCm3 - usedVol : null;
+        var suggN = {};
+        for (var round2 = 0; round2 < 4; round2++) {
+          var added2 = false;
+          pool3.slice().sort(ofn).forEach(function (g) {
+            var plAll = PackLib.fitPlacements(sharedFree, g.l, g.w, g.h, 60, volRoom);
+            var ghost = c.boxes.slice(); // 逐箱落位: 支撑认原有+本批, 可摞高
+            var plS = [];
+            plAll.forEach(function (p) {
+              if (PackLib.isSupported(p, ghost)) {
+                plS.push(p);
+                ghost.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
+              }
+            });
+            if (!plS.length) return;
+            if (volRoom != null) volRoom -= plS.length * g.l * g.w * g.h;
+            sharedFree = PackLib.clipFree(sharedFree, plS);
+            suggN[g.id] = (suggN[g.id] || 0) + plS.length;
+            added2 = true;
+          });
+          if (!added2) break;
+        }
+        var tv3 = 0, tn3 = 0;
+        Object.keys(suggN).map(Number).forEach(function (gid3) {
+          var g3 = S.groups[gid3];
+          tv3 += suggN[gid3] * g3.l * g3.w * g3.h / 1e6;
+          tn3 += suggN[gid3];
         });
-        var fit = plS.length;
-        if (fit <= 0) return;
-        if (volRoom != null) volRoom -= fit * g.l * g.w * g.h;
-        sharedFree = PackLib.clipFree(sharedFree, plS);
-        c.suggestExtra.push({ spu: g.spu, gid: g.id, n: fit, l: g.l, w: g.w, h: g.h, vol: g.l * g.w * g.h }); // 仅订单外加装建议
+        if (!best3 || tv3 > best3.tv + 1e-9 || (Math.abs(tv3 - best3.tv) < 1e-9 && tn3 > best3.tn)) {
+          best3 = { suggN: suggN, tv: tv3, tn: tn3 };
+        }
+      });
+      Object.keys(best3.suggN).map(Number).sort(function (a4, b4) { return best3.suggN[b4] * S.groups[b4].l * S.groups[b4].w * S.groups[b4].h - best3.suggN[a4] * S.groups[a4].l * S.groups[a4].w * S.groups[a4].h; }).forEach(function (gid2) {
+        var g2b = S.groups[gid2];
+        c.suggestExtra.push({ spu: g2b.spu, gid: gid2, n: best3.suggN[gid2], l: g2b.l, w: g2b.w, h: g2b.h, vol: g2b.l * g2b.w * g2b.h });
       });
       // 保持联合计算顺序(大箱先), 执行时所见即所得
       c.suggest = c.suggestExtra;
