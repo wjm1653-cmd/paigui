@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.50">
+<html lang="zh-CN" data-ver="2026.1021.51">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.50</title>
+<title>智能排柜工具 v2026.1021.51</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.50</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.51</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4532,6 +4532,30 @@ function buildSpuLabelOverlay() {
       if (score <= pref * 100 + cand.off * 4) break;
     }
     if (!best) return;
+    // 兜底: 最优候选仍与已放标注重叠 → 逐步上抬/侧移找空位(宁可高于柜顶, 不许遮挡别的标注)
+    if (best.rect && placedRects.length) {
+      var clash = false;
+      for (var q0 = 0; q0 < placedRects.length; q0++) if (overlap(best.rect, placedRects[q0], 7)) { clash = true; break; }
+      if (clash) {
+        outer:
+        for (var hTry = best.ph + 10; hTry <= H + 46; hTry += 10) {
+          for (var wTry = best.pw - 40; wTry <= best.pw + 40; wTry += 20) {
+            var pl3 = Math.max(-35, Math.min(L + 35, best.pl));
+            var pw3 = Math.max(-30, Math.min(W + 30, wTry));
+            var ph3 = Math.max(18, Math.min(H + 46, hTry));
+            var sc3 = toScreen(pl3, pw3, ph3);
+            var wp3 = new THREE.Vector3(pl3 / 100 - L / 200, ph3 / 100, pw3 / 100 - W / 200);
+            var dc3 = V.camera.position.distanceTo(wp3);
+            var hw3 = (sprWm / 2) / (fovT2 * V.camera.aspect * dc3) * (vw / 2);
+            var hh3 = (sprHm / 2) / (fovT2 * dc3) * (vh / 2);
+            var r3 = { x1: sc3.x - hw3, x2: sc3.x + hw3, y1: sc3.y - hh3, y2: sc3.y + hh3 };
+            var bad = false;
+            for (var q3 = 0; q3 < placedRects.length; q3++) if (overlap(r3, placedRects[q3], 7)) { bad = true; break; }
+            if (!bad) { best = { pl: pl3, pw: pw3, ph: ph3, rect: r3, score: best.score }; break outer; }
+          }
+        }
+      }
+    }
     var sp = makeLabelSprite(cd.lines, cd.colCss);
     sp.position.set(best.pl / 100 - L / 200, best.ph / 100, best.pw / 100 - W / 200);
     sp.userData = { gid: cd.gid, minIdx: cd.minIdx || 0 }; // 点击高亮 + 动画同步(第一箱出现时标注才出现)
