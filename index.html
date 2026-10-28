@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.54">
+<html lang="zh-CN" data-ver="2026.1021.55">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.54</title>
+<title>智能排柜工具 v2026.1021.55</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.54</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.55</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -352,15 +352,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
       <button id="btnPack" class="btn primary big" disabled>🚚 开始排柜</button>
     </div>
 
-    <div class="step" id="step5" hidden>
-      <div class="step-title"><span class="num">5</span> 手动微调分柜</div>
-      <div class="hint">调整各柜装载的箱数后重新排柜</div>
-      <div id="assignPanel"></div>
-      <div class="assign-actions">
-        <button id="btnReassign" class="btn primary">按此方案重新排柜</button>
-        <button id="btnResetAssign" class="btn ghost">重置为自动</button>
-      </div>
-    </div>
+
   </aside>
 
   <!-- ============ 主区域 ============ -->
@@ -4026,7 +4018,7 @@ function buildPresets() {
 });
 
 /* ================= 排柜执行 ================= */
-function runPack(overrideAssign) {
+function runPack() {
   if (!S.items.length) return toast('请先上传订单表', true);
   var L = S.cont.L, W = S.cont.W, H = S.cont.H;
   var capVol = Number($('capVol').value);
@@ -4035,7 +4027,7 @@ function runPack(overrideAssign) {
   S.groups = PackLib.buildGroups(S.items, S.spuMap);
   if (!S.groups.length) return toast('无有效数据', true);
 
-  if (S.mode === 'single' && !overrideAssign) {
+  if (S.mode === 'single') {
     var r = PackLib.packContainerBest({ L: L, W: W, H: H }, S.groups, { volumeCap: capVol });
     var un0 = leftovers(S.groups, r).reduce(function (s, u) { return s + u.qty; }, 0);
     if (un0 > 0) {
@@ -4074,17 +4066,6 @@ function runPack(overrideAssign) {
       }
     }
     S.result = { containers: [r], unplaced: leftovers(S.groups, r) };
-  } else if (overrideAssign) {
-    var cs = [];
-    for (var ci = 0; ci < overrideAssign.nCont; ci++) {
-      var sub = [];
-      S.groups.forEach(function (g) {
-        var q = overrideAssign.m[ci][g.id] || 0;
-        if (q > 0) sub.push({ id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: q });
-      });
-      cs.push(sub.length ? PackLib.packContainerBest({ L: L, W: W, H: H }, sub, { volumeCap: capVol }) : null);
-    }
-    S.result = { containers: cs.filter(Boolean), unplaced: leftoversMulti(S.groups, overrideAssign) };
   } else {
     // 多柜模式: 用满"单柜体积上限"设置; 同柜优先SPU临时需求已按要求移除
     var multiCap = Math.min(parseFloat($('capVol').value) || 69.5, L * W * H / 1e6);
@@ -4094,9 +4075,7 @@ function runPack(overrideAssign) {
   }
   processResult();
   // 初始化手动分柜矩阵
-  S.assign = null;
-  buildAssignPanel();
-  $('step5').hidden = S.mode !== 'multi' || S.result.containers.length < 1;
+
   showResult();
   var stat = S.result.containers.map(function (c, i) { return '柜' + (i + 1) + ' ' + (c.volumeUtil * 100).toFixed(1) + '%'; }).join(' · ');
   var unQty = 0; (S.result.unplaced || []).forEach(function (u) { unQty += u.qty; });
@@ -4308,52 +4287,6 @@ window.stuffExtras = stuffExtras;
 window.toggleExtras = toggleExtras;
 
 /* ================= 手动分柜面板 ================= */
-function buildAssignPanel() {
-  var panel = $('assignPanel');
-  if (S.mode !== 'multi' || !S.result) { panel.innerHTML = ''; return; }
-  var nCont = S.result.containers.length;
-  if (!S.assign) {
-    S.assign = { nCont: Math.max(nCont, 2), m: [] };
-    for (var i = 0; i < S.assign.nCont; i++) S.assign.m.push({});
-    S.groups.forEach(function (g) {
-      for (var ci = 0; ci < nCont; ci++) {
-        var n = 0;
-        S.result.containers[ci].boxes.forEach(function (b) { if (b.g === g.id) n++; });
-        S.assign.m[ci][g.id] = n;
-      }
-      var un = 0; (S.result.unplaced || []).forEach(function (u) { if (u.id === g.id) un = u.qty; });
-      S.assign.m[S.assign.nCont - 1][g.id] = (S.assign.m[S.assign.nCont - 1][g.id] || 0);
-      S.assign.un = S.assign.un || {}; S.assign.un[g.id] = un;
-    });
-    if (nCont === 1) S.assign.nCont = 2; // 至少显示两柜供调整
-  }
-  var html = '';
-  S.groups.forEach(function (g) {
-    html += '<div class="assign-row"><span class="an" title="' + esc(g.spu) + ' ' + g.l + '×' + g.w + '×' + g.h + '">' + esc(g.spu) + '</span>';
-    for (var ci = 0; ci < S.assign.nCont; ci++) {
-      html += '<input type="number" min="0" max="' + g.qty + '" value="' + (S.assign.m[ci][g.id] || 0) + '" data-g="' + g.id + '" data-c="' + ci + '">';
-    }
-    html += '<span style="color:var(--dim);font-size:11px">/' + g.qty + '</span></div>';
-  });
-  html += '<div class="assign-row"><span class="an" style="color:var(--dim)">柜号 →</span>';
-  for (var ci2 = 0; ci2 < S.assign.nCont; ci2++) html += '<span style="width:52px;text-align:center;color:var(--acc)">柜' + (ci2 + 1) + '</span>';
-  html += '</div>';
-  panel.innerHTML = html;
-  panel.querySelectorAll('input').forEach(function (inp) {
-    inp.addEventListener('change', function () {
-      S.assign.m[Number(inp.dataset.c)][Number(inp.dataset.g)] = Math.max(0, Math.min(Number(g_max(Number(inp.dataset.g))), Number(inp.value) || 0));
-      function g_max(gid) { var g = S.groups.filter(function (x) { return x.id === gid; })[0]; return g ? g.qty : 0; }
-    });
-  });
-}
-$('btnReassign').addEventListener('click', function () {
-  if (!S.assign) return;
-  runPack(S.assign);
-});
-$('btnResetAssign').addEventListener('click', function () {
-  S.assign = null;
-  runPack();
-});
 
 /* ================= 结果展示 ================= */
 function showResult(autoplay) {
@@ -5359,7 +5292,6 @@ $('btnZoomOut').addEventListener('click', function () { V.zoom(1.28); });
 document.querySelectorAll('input[name=mode]').forEach(function (r) {
   r.addEventListener('change', function () {
     S.mode = document.querySelector('input[name=mode]:checked').value;
-    $('step5').hidden = S.mode !== 'multi';
     $('ctWrap').hidden = S.mode !== 'multi';
   });
 });
