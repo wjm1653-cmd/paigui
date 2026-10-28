@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.52">
+<html lang="zh-CN" data-ver="2026.1021.53">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.52</title>
+<title>智能排柜工具 v2026.1021.53</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.52</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.53</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -2669,7 +2669,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         combo.forEach(function (c) { if (c.dep > D) D = c.dep; });
         var gap = 0;
         combo.forEach(function (c) { gap += (D - c.dep) * c.w * c.topH; });
-        return val - gap * 0.5;
+        return val - gap * 3;
       }
       function bt(combo, usedW, val, colCnt) {
         nodes++;
@@ -2895,7 +2895,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         var D = 0, gap = 0;
         combo.forEach(function (c) { if (c.dep > D) D = c.dep; });
         combo.forEach(function (c) { gap += (D - c.dep) * c.w * c.topH; });
-        var eff = val - gap * 0.5;
+        var eff = val - gap * 3;
         if (combo.length) leaves.push({ cols: combo.slice(), D: D, eff: eff });
         if (val + (W - usedW) * bestDen <= eff) return;
         for (var i = 0; i < cts.length; i++) {
