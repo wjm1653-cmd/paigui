@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.53">
+<html lang="zh-CN" data-ver="2026.1021.54">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.53</title>
+<title>智能排柜工具 v2026.1021.54</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.53</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.54</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3214,7 +3214,137 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
 
   /* ---------- 多柜自动分柜 ---------- */
+  function packAlloc(container, groups, maxContainers, opts) {
+    opts = opts || {};
+    var capM3 = opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6;
+    var volOfC = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+    var gv = function (g) { return g.l * g.w * g.h * g.qty / 1e6; };
+    var gById = function (gid) { for (var i = 0; i < groups.length; i++) if (groups[i].id === gid) return groups[i]; return null; };
+    var totVol = 0;
+    groups.forEach(function (g) { totVol += gv(g); });
+    var n = Math.max(1, Math.min(maxContainers, Math.ceil(totVol / (capM3 - 1.5))));
+    var target = totVol / n;
+    var FILL = Math.min(capM3 - 0.4, target + 1.4);
+    var rem = groups.map(function (g) { return { id: g.id, qty: g.qty }; });
+    var assign = [];
+    for (var ai = 0; ai < n; ai++) assign.push({});
+    function curV(ci) { var s = 0; for (var gid in assign[ci]) s += gById(+gid).l * gById(+gid).w * gById(+gid).h * assign[ci][gid] / 1e6; return s; }
+    function take(ci, gid, q2) {
+      var r = rem.filter(function (x) { return x.id === gid; })[0];
+      if (!r) return 0;
+      q2 = Math.min(q2, r.qty);
+      if (q2 <= 0) return 0;
+      r.qty -= q2;
+      assign[ci][gid] = (assign[ci][gid] || 0) + q2;
+      return q2;
+    }
+    (opts.prioGroups || []).forEach(function (pg, pi) {
+      if (pi >= n) return;
+      pg.forEach(function (gid) { take(pi, gid, (rem.filter(function (x) { return x.id === gid; })[0] || {}).qty || 0); });
+    });
+    var guardA = 0;
+    while (rem.some(function (x) { return x.qty > 0; }) && guardA++ < 800) {
+      var cand = rem.filter(function (x) { return x.qty > 0; }).map(function (x) { return gById(x.id); }).sort(function (a, b) { return gv(b) - gv(a); });
+      var moved = false;
+      for (var ci2 = 0; ci2 < cand.length && !moved; ci2++) {
+        var g2 = cand[ci2];
+        var ti = 0;
+        for (var k2 = 1; k2 < n; k2++) if (curV(k2) < curV(ti)) ti = k2;
+        if (curV(ti) + gv(g2) <= FILL) { take(ti, g2.id, g2.qty); moved = true; break; }
+        var per = g2.l * g2.w * g2.h / 1e6;
+        var q3 = Math.min(g2.qty - rem.filter(function (x) { return x.id === g2.id; })[0].qty + g2.qty, 0); // placeholder
+        var rq = rem.filter(function (x) { return x.id === g2.id; })[0].qty;
+        var q4 = Math.min(rq, Math.floor((FILL - curV(ti)) / per));
+        if (q4 >= 4 || (q4 > 0 && rq - q4 === 0)) { take(ti, g2.id, q4); moved = true; break; }
+        for (var k3 = 0; k3 < n; k3++) if (curV(k3) + gv(g2) <= FILL) { take(k3, g2.id, rq); moved = true; break; }
+        if (moved) break;
+      }
+      if (!moved) {
+        var g4 = cand[0];
+        var rq4 = rem.filter(function (x) { return x.id === g4.id; })[0].qty;
+        var ti2 = 0;
+        for (var k4 = 1; k4 < n; k4++) if (curV(k4) < curV(ti2)) ti2 = k4;
+        take(ti2, g4.id, rq4);
+      }
+    }
+    var containers = [];
+    var overflow = [];
+    assign.forEach(function (am) {
+      var gids = Object.keys(am).map(Number);
+      if (!gids.length) return;
+      var pool = gids.map(function (gid) { var g = gById(gid); return { id: gid, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: am[gid] }; });
+      var r = packContainerBest(container, pool, { volumeCap: capM3 });
+      var plN = {};
+      r.boxes.forEach(function (b) { plN[b.g] = (plN[b.g] || 0) + 1; });
+      pool.filter(function (g) { return g.qty - (plN[g.id] || 0) > 0; }).forEach(function (ug) {
+        try {
+          var r2 = packContainerBest(container, pool, { volumeCap: capM3, prioIds: [ug.id], prioFirst: true });
+          var p1 = {}, p2 = {};
+          r.boxes.forEach(function (b) { p1[b.g] = (p1[b.g] || 0) + 1; });
+          r2.boxes.forEach(function (b) { p2[b.g] = (p2[b.g] || 0) + 1; });
+          var l1 = pool.reduce(function (s, g) { return s + g.qty - (p1[g.id] || 0); }, 0);
+          var l2 = pool.reduce(function (s, g) { return s + g.qty - (p2[g.id] || 0); }, 0);
+          if (l2 < l1) r = r2;
+        } catch (e) { }
+      });
+      containers.push(r);
+      var plF = {};
+      r.boxes.forEach(function (b) { plF[b.g] = (plF[b.g] || 0) + 1; });
+      pool.forEach(function (g) { if (g.qty - (plF[g.id] || 0) > 0) overflow.push({ id: g.id, qty: g.qty - (plF[g.id] || 0) }); });
+    });
+    if (!containers.length) return { containers: [], unplaced: groups.filter(function (g) { return g.qty > 0; }) };
+    function recomputeFree(c) {
+      var f = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+      c.boxes.forEach(function (b) { f = clipFree(f, [b]); });
+      c.freeBoxes = f;
+    }
+    containers.forEach(recomputeFree);
+    var guardO = 0;
+    while (overflow.length && guardO++ < 400) {
+      var placed2 = false;
+      for (var oi = 0; oi < overflow.length && !placed2; oi++) {
+        var o = overflow[oi];
+        var g5 = gById(o.id);
+        for (var ci4 = 0; ci4 < containers.length; ci4++) {
+          var c5 = containers[ci4];
+          if (volOfC(c5) >= capM3 - 0.05) continue;
+          var pl5 = fitPlacements(c5.freeBoxes || [], g5.l, g5.w, g5.h, o.qty, capM3 * 1e6 - volOfC(c5) * 1e6, 0)
+            .filter(function (p) { return isSupported(p, c5.boxes); });
+          if (!pl5.length) continue;
+          var nb5 = pl5.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: o.id }; });
+          nb5.forEach(function (b) { c5.boxes.push(b); });
+          c5.freeBoxes = clipFree(c5.freeBoxes || [], nb5);
+          o.qty -= nb5.length;
+          if (o.qty <= 0) overflow.splice(oi, 1);
+          placed2 = true;
+          break;
+        }
+      }
+      if (!placed2) break;
+    }
+    rem.filter(function (x) { return x.qty > 0; }).forEach(function (x) { overflow.push({ id: x.id, qty: x.qty }); });
+    var unplaced = overflow.map(function (o) {
+      var g6 = gById(o.id);
+      return { id: o.id, spu: g6.spu, skus: g6.skus, l: g6.l, w: g6.w, h: g6.h, qty: o.qty };
+    });
+    return { containers: containers, unplaced: unplaced };
+  }
+
   function packAll(container, groups, maxContainers, opts) {
+    if (maxContainers > 1 && groups.length > 1) {
+      var volOfP = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+      var ra = packAlloc(container, groups, maxContainers, opts);
+      var rb = packAllInner(container, groups, maxContainers, opts);
+      function sc(r) {
+        var un = r.unplaced.reduce(function (s, g) { return s + g.qty; }, 0);
+        var vs = r.containers.map(volOfP);
+        return un * 1000 + (vs.length ? Math.max.apply(null, vs) - Math.min.apply(null, vs) : 0);
+      }
+      return sc(ra) <= sc(rb) ? ra : rb;
+    }
+    return packAllInner(container, groups, maxContainers, opts);
+  }
+  function packAllInner(container, groups, maxContainers, opts) {
     maxContainers = maxContainers || 10;
     opts = opts || {};
     var left = groups.map(function (g) { return { id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: g.qty }; });
@@ -3265,7 +3395,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       left.forEach(function (g) { if (g.qty > 0) totRem += g.l * g.w * g.h * g.qty; });
       totRem /= 1e6;
       var nEst = Math.max(1, Math.ceil(totRem / capM3 - 0.02));
-      var tgt = Math.min(capM3, totRem / nEst + 1.5); // +1.5m³缓冲: 装箱必有损耗, 装不满就靠后续柜/回填补
+      var tgt = Math.min(capM3, totRem / nEst + (self.__TGT_BUF || 1.2)); // +1.5m³缓冲: 装箱必有损耗, 装不满就靠后续柜/回填补
       var o3 = o2;
       if (nEst > 1 && tgt < capM3 - 0.3) {
         var prioNeed = 0;
@@ -3387,7 +3517,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         var vols = containers.map(volOfC);
         var maxI = 0, minI = 0;
         vols.forEach(function (v, i) { if (v > vols[maxI]) maxI = i; if (v < vols[minI]) minI = i; });
-        if (vols[maxI] - vols[minI] <= 1.2e6 || maxI === minI) break; // 差≤1.2m³即达标
+        if (vols[maxI] - vols[minI] <= 0.8e6 || maxI === minI) break; // 差≤1.2m³即达标
         var dc = containers[maxI], lc = containers[minI];
         var locked = (prioGroups && prioGroups[maxI]) || null; // 优先组集中的箱不搬
         var cand = dc.boxes.filter(function (b) { return !locked || locked.indexOf(b.g) < 0; })
@@ -3441,7 +3571,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             var c9 = containers[ci9];
             var v9 = 0;
             c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
-            var pl9 = fitPlacements(c9.freeBoxes || [], gg.l, gg.w, gg.h, gg.qty, capM3 * 1e6 + 5e5 - v9, 0)
+            var pl9 = fitPlacements(c9.freeBoxes || [], gg.l, gg.w, gg.h, gg.qty, capM3 * 1e6 + 8e5 - v9, 0)
               .filter(function (p) { return isSupported(p, c9.boxes); });
             if (!pl9.length) continue;
             var nb9 = pl9.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gg.id }; });
@@ -3552,6 +3682,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     clipFree: clipFree
   };
 });
+
+
 
 </script>
 <script>var EMBEDDED_DATA = {"mapping":{"BS26068-26-SBK-LBG":"BS26068","BS26068-26-SBK-PBR":"BS26068","BS26067-26-SBK-LBG":"BS26067","BS26067-26-SBK-PBR":"BS26067","BS26067-26-SGY-PBG":"BS26067","BS26012-26-SBK-LBG":"BS26012","BS26012-26-SBK-CGN":"BS26012","BS26012-26-SBK-PBR":"BS26012","BS26012-26-SBK-PBG":"BS26012","BS26048-26-WBR-LBG":"BS26048","BS26048-26-WBR-PBR":"BS26048","BS26048-26-WBR-CGN":"BS26048","BS26073-26-WNT-LBG":"BS26073","BS26073-26-WNT-VOG":"BS26073","BS26073-26-WBR-PBR":"BS26073","BS26073-26-WBR-PGN":"BS26073","DC26086-WBR-LBG":"DC26086","DC26086-WBR-LBR":"DC26086","DC26086-WWA-LBG":"DC26086","DC26086-WWA-CGN":"DC26086","OT26090-LBG":"OT26090","OT26090-XBR":"OT26090","OT26090-XGN":"OT26090","OT26090-SWT":"OT26090","OT25281-WNT-LBG":"OT25281","OT25281-WWA-PBR":"OT25281","OT25281-WWA-PBK":"OT25281","DC26050-WNT-LBG":"DC26050","DC26050-WBR-LBR":"DC26050","DC26050-WBR-CGN":"DC26050","BS25313-26-WBR-LBG":"BS25313-26","BS25313-26-WBR-PBR":"BS25313-26","BS25313-26-WBR-CGN":"BS25313-26","OT26074-VGN":"OT26074","OT26074-LBG":"OT26074","OT26074-TWT":"OT26074","OT26069-VGN":"OT26069","OT26069-LBG":"OT26069","OT26069-XBG":"OT26069","OT26070-VGN":"OT26070","OT26070-LBG":"OT26070","OT26070-TWT":"OT26070","OT26057-LBG":"OT26057","OT26057-LBL":"OT26057","OT26057-VGN":"OT26057","OT26056-LBG":"OT26056","OT26056-VGN":"OT26056","BE26016-WNT-LBG":"BE26016","BE26016-WBR-LBG":"BE26016","BS26049-26-WBR-LBG":"BS26049-26","BS26049-26-WBR-PBR":"BS26049-26","BS26046-26-WWN-WWN":"BS26046-26","BS26046-26-WNT-WNT":"BS26046-26","BS26046-26-WBK-WBK":"BS26046-26","D24183MB-MMS":"D24183","D24183MZ-MMS":"D24183","D24183MZ-PBR":"D24183","D25388MHT-XOR":"D25388","D25388MHT-XGL":"D25388","D25388MHT-XMS":"D25388","D25388MB-MMS":"D25388","D26024MB-MMS":"D26024","D26024MZ-MLV":"D26024","D26024MZ-PBR":"D26024","O2112-PBR":"O2112","O2112-PGL":"O2112","O26071-PBR":"O26071","O26071-PGL":"O26071","O26013-XMS":"O26013","O26013-PBR":"O26013","O8409-MMS":"O8409","O8409-PBR":"O8409","D25316MB-MMS":"D25316","D25316MHT-XLV":"D25316","D25316MHT-PBR":"D25316","D25353-MMS":"D25353","D25353-XBR":"D25353","D25353-XGL":"D25353","D26041-MMS":"D26041","D26041-RGL":"D26041","D26040-MMS":"D26040","D26040-RGL":"D26040","B25371MB-26-MMS":"B25371-26","B25371MB-26-MLV":"B25371-26","B25371MB-26-RGL":"B25371-26","B25146MZ-26-MMS":"B25146-26","B25146MZ-26-MLV":"B25146-26","B25146MZ-26-RGL":"B25146-26","B25252C-26-PBR":"B25252-26","B25252H-26-PBR":"B25252-26","B25252C-26-PHS":"B25252-26","B25252C-26-XBS":"B25252-26","B25209-26-MMS":"B25209-26","B25209-26-MGR":"B25209-26","B25209-26-PBR":"B25209-26","B24225-26HT-MMS":"B24225-26","B24225-26HT-MGR":"B24225-26","B24225-26B-MMS":"B24225-26","B24225-26B-MGR":"B24225-26","D25156MB-PHS":"D25156","D25156MZ-PCM":"D25156","D25156MHT-PHS":"D25156","D25156MB-MMS":"D25156","B7337-4226-3TBR":"B7337-26-3T","B7337H-4226-10-PHS":"B7337-26-10","B7337H-4226-10-PBR":"B7337-26-10","B7337H-4226-10-PLV":"B7337-26-10","B7337H-4226-10-PBL":"B7337-26-10","B7337B-4226-10-PHS":"B7337-26-10","B7337B-4226-10-PBR":"B7337-26-10","B7337B-4226-10-PLV":"B7337-26-10","B7337B-4226-10-PBL":"B7337-26-10","B25054MHT-26-XBR":"B25054-26","B25054MHT-26-XOR":"B25054-26","B25054MB-26-MMS":"B25054-26","B25054MHT-26-PBR":"B25054-26","B25052MB-26-MMS":"B25052-26","B25052MZ-26-MMS":"B25052-26","B25052MZ-26-PBR":"B25052-26","B25052MZ-26-PMS":"B25052-26","B25052MB-26-XGL":"B25052-26","B25052MB-26-XBR":"B25052-26","B25052MZ-26-MGR":"B25052-26","B25052MZ-26-MLV":"B25052-26","D25290-QBS":"D25290","D25290-MMS":"D25290","L25338-2-MMS":"L25338-2","L25338-2-QBS":"L25338-2","D25017-XBR":"D25017","D25017-XGL":"D25017","D25017-MMS":"D25017","D25017-MLV":"D25017","O25225MH-MBS":"O25225","O25225MB-MBS":"O25225","O25225MZ-MBS":"O25225","D7337-3TBR-4":"D7337-3T-S4","D7337-3TBR":"D7337-3T","B25228-26-MMS":"B25228-26","B25228-26-MGR":"B25228-26","B25228-26-PHS":"B25228-26","B25228-26-PBR":"B25228-26","B25181MB-26-MMS":"B25181-26","B25181MB-26-MBS":"B25181-26","L25035MB-MMS":"L25035","L25035MHT-MMS":"L25035","L25035MHT-PBR":"L25035","L25035MHT-PHS":"L25035","D24226MB-MMS":"D24226","D24226MB-MBR":"D24226","D24226MHT-MMS":"D24226","D25006MB-MMS":"D25006","D25006MHT-MMS":"D25006","D25006MZ-MMS":"D25006","L25001H-MGR":"L25001","L25001B-MMS":"L25001","L25104H-MGR":"L25104","L25104B-MMS":"L25104","D25060-MMS":"D25060","D25060-RBR":"D25060","D25060-RGL":"D25060","D25060-QBS":"D25060","D25060-XBS":"D25060","B24201B-26-MMS":"B24201-26","B24201HT-26-MMS":"B24201-26","D2143-5BS":"D2143-5","D2143-5FS":"D2143-5","D2143-5-QBR":"D2143-5","D2143-5-QLV":"D2143-5","D2143-5-MMS":"D2143-5","B25015-24HT":"B25015-24","B25015-24B":"B25015-24","B25015-24HS":"B25015-24","B24175B-26-MMS":"B24175-26","B24175Z-26-MMS":"B24175-26","B24175HL-26-MMS":"B24175-26","B24139B-26-MST":"B24139-26","B24139H-26-MST":"B24139-26","B24139B-26-MMS":"B24139-26","B24139B-26-MBL":"B24139-26","B24139B-26-MLV":"B24139-26","B24139B-26-MYL":"B24139-26","B24227-26-PBR":"B24227-26","B24227-26-PCM":"B24227-26","B24227-26-MMS":"B24227-26","B24227-26-RGL":"B24227-26","B24227-26-MGR":"B24227-26","B2201B-26-MMS":"B2201-26","B2201H-26-MGR":"B2201-26","B2201B-26-MBL":"B2201-26","B2201B-26-MGR":"B2201-26","B2201B-26-MLV":"B2201-26","B2201-26-WBR-LBR":"B2201-26","B2201-26-WBR-LGY":"B2201-26","B2201-26-WBR-CLV":"B2201-26","B2201-26-WBR-PBR":"B2201-26","B24165-26-MMS":"B24165-26","B24165-26-MGR":"B24165-26","B24165-26-MDG":"B24165-26","B24165-26-MLV":"B24165-26","B24165-26-PDG":"B24165-26","B24165-26-PBR":"B24165-26","B24165K-26-PDG":"B24165-26","B24165K-26-PNA":"B24165-26","B24165K-26-PMS":"B24165-26","D24164-QBS":"D24164","D24164-MMS":"D24164","D24164-RGL":"D24164","D24164-RYL":"D24164","D24164-ROR":"D24164","D24164-RCM":"D24164","D24164-MBL":"D24164","D24164-MLV":"D24164","B7339MZ-26-MMS":"B7339-26","B7339MZ-26-MLV":"B7339-26","B7339MZ-26-MGR":"B7339-26","L23217B-MMS":"L23217","L23217H-MGR":"L23217","L23217B-RGL":"L23217","L23217B-RBR":"L23217","L23217B-QBS":"L23217","L24026-160-QBR":"L24026-160","L24026-160-QGL":"L24026-160","L24026-160-QBS":"L24026-160","L24026-160-MMS":"L24026-160","L24026-160-XBL":"L24026-160","L24026-160-RGL":"L24026-160","L24026-160-RZS":"L24026-160","L24026-160-RRU":"L24026-160","L24026-110-QBR":"L24026-110","L24026-110-QGL":"L24026-110","L24026-110-QBS":"L24026-110","L24026-110-MMS":"L24026-110","L24026-110-XBL":"L24026-110","L24026-110-RGL":"L24026-110","L24026-110-RZS":"L24026-110","L24026-110-RRU":"L24026-110","B2408M-26-MMS":"B2408-26","B2408M-26-MGR":"B2408-26","B2408M-26-MDG":"B2408-26","B2408M-26-MBL":"B2408-26","B2408MZ-26-PMS":"B2408-26","B2408MZ-26-PBR":"B2408-26","B2408MZ-26-PLV":"B2408-26","B23175MSW-26-QBS":"B23175-26","B23175MSW-26-MMS":"B23175-26","B23175MSW-26-MGR":"B23175-26","B23175MSW-26-RGL":"B23175-26","B23175MSW-26-PBR":"B23175-26","B23175MSW-26-PMS":"B23175-26","B7601MB-26BS-1":"B7601-26-S1","B7601MB-26MS-1":"B7601-26-S1","B7601MB-26BL-1":"B7601-26-S1","B7601MB-26GR-1":"B7601-26-S1","B7601MB-26BS":"B7601-26","B7601MB-26MS":"B7601-26","B7601MB-26BL":"B7601-26","B7601MB-26GR":"B7601-26","B7601MZ-26PMS":"B7601-26","B7601MZ-26PBR":"B7601-26","B7601MZ-26PLV":"B7601-26","B24031F-26-PBR":"B24031-26","B24031F-26-PHS":"B24031-26","B24031F-26-MMS":"B24031-26","B24031F-26-MGR":"B24031-26","D24064-MMS-2":"D24064-S2","D24064-RGL-2":"D24064-S2","D24064-RBR-2":"D24064-S2","D24064-RLL-2":"D24064-S2","D24064-RRU-2":"D24064-S2","D24064-QBS":"D24064","D24064-MMS":"D24064","D24064-RGL":"D24064","D24064-RBR":"D24064","D24064-RLL":"D24064","D24064-RRU":"D24064","D24064-RPP":"D24064","D24064-XBS":"D24064","D2078-PBR":"D2078","D2078-MMS":"D2078","D2078-MGR":"D2078","D2078-QBS":"D2078","D2078-QHS":"D2078","B2078-26-PBR":"B2078-26","B2078-26-MMS":"B2078-26","B2078-26-MGR":"B2078-26","B2078-26-QBS":"B2078-26","B2078-26-QHS":"B2078-26","D7337H-10-PHS":"D7337-10","D7337H-10-PBR":"D7337-10","D7337H-10-PLV":"D7337-10","D7337H-10-PBL":"D7337-10","D7337B-10-PHS":"D7337-10","D7337B-10-PBR":"D7337-10","D7337B-10-PLV":"D7337-10","D7337B-10-PBL":"D7337-10","B2171Y-26BS":"B2171-26","B2171Y-26HS":"B2171-26","B2171Y-26GL":"B2171-26","B2171Y-26MS":"B2171-26","B2171Y-26GR":"B2171-26","D2111-5BR":"D2111-5","D2111-5LV":"D2111-5","D2168MS":"D2168","D2168CM":"D2168","D2168BR":"D2168","D2168HS":"D2168","D2168LV":"D2168","B7505-26HS-3":"B7505-26-S3","B7505-26BR-3":"B7505-26-S3","B7505-26MS-3":"B7505-26-S3","B7505-26GR-3":"B7505-26-S3","B7505-26LV":"B7505-26","B7505-26BL":"B7505-26","B7505-26DG":"B7505-26","B7505-26HS":"B7505-26","B7505-26BR":"B7505-26","B7505-26PMS":"B7505-26","B7505-26MS":"B7505-26","B7505-26TP":"B7505-26","B7505-26GR":"B7505-26","B7505-26MLV":"B7505-26","B7505-26MDG":"B7505-26","B2104-26HS-4":"B2104-26-S4","B2104-26BS-4":"B2104-26-S4","B2104-26HS-3":"B2104-26-S3","B2104-26BS-3":"B2104-26-S3","B2104-26HS":"B2104-26","B2104-26BS":"B2104-26","D2118-3BS":"D2118-3","D2118-3HS":"D2118-3","D2118-3FS":"D2118-3","D2118-3-MMS":"D2118-3","D2118-3-RGL":"D2118-3","D2118-3-RBS":"D2118-3","D2118-3-RBR":"D2118-3","O2111GL":"O2111","O2111BR":"O2111","O2111AGL":"O2111","O2111ABR":"O2111","B7337-4226-9TGL-4":"B7337-26-9T-S4","B7337-4226-9TBR-4":"B7337-26-9T-S4","B7337-4226-9TGL-3":"B7337-26-9T-S3","B7337-4226-9TBR-3":"B7337-26-9T-S3","B7337-4226-9TGL":"B7337-26-9T","B7337-4226-9TBR":"B7337-26-9T","B7337-4230-9TBR":"B7337-30-9T","D7337-9TGL":"D7337-9T","D7337-9TBR":"D7337-9T","D7337-9TGL-4":"D7337-9T-S4","D7337-9TBR-4":"D7337-9T-S4","D7337-8THS-4":"D7337-8T-S4","D7337-8TTP-4":"D7337-8T-S4","D7337-8THT-4":"D7337-8T-S4","D7337-8THT":"D7337-8T","D7337-8THS":"D7337-8T","D7337-8TTP":"D7337-8T","B7337-8426THS":"B7337-8426T","B7337-8426THT":"B7337-8426T","B7337-8426TTP":"B7337-8426T","B7337-5426THS-4":"B7337-5426T-S4","B7337-5426TBS-4":"B7337-5426T-S4","B7337-5426THS":"B7337-5426T","B7337-5426TBS":"B7337-5426T","B7337-5430THS":"B7337-5430T","B7337-5430TBS":"B7337-5430T","B7337-4226-2T-MMS-4":"B7337-26-2T-S4","B7337-4226-2T-MMS143-4":"B7337-26-2T-S4","B7337-4226-2TYL-4":"B7337-26-2T-S4","B7337-4226-2TGL-4":"B7337-26-2T-S4","B7337-4226-2T-MMS-3":"B7337-26-2T-S3","B7337-4226-2T-MMS143-3":"B7337-26-2T-S3","B7337-4226-2TYL-3":"B7337-26-2T-S3","B7337-4226-2TGL-3":"B7337-26-2T-S3","B7337-4226-2T-MMS":"B7337-26-2T","B7337-4226-2T-MMS143":"B7337-26-2T","B7337-4226-2TYL":"B7337-26-2T","B7337-4226-2THS":"B7337-26-2T","B7337-4226-2TGL":"B7337-26-2T","B7337-4230-2TGL":"B7337-30-2T","D7337-2TGL-4":"D7337-2T-S4","D7337-2TYL-4":"D7337-2T-S4","D7337-2THS-4":"D7337-2T-S4","D7337-2T-MMS-4":"D7337-2T-S4","D7337-2T-MBS-4":"D7337-2T-S4","D7337-2T-MLV-4":"D7337-2T-S4","D7337-2TGL":"D7337-2T","D7337-2TYL":"D7337-2T","D7337-2THS":"D7337-2T","D7337-2TBS":"D7337-2T","D7337-2TGR":"D7337-2T","D7337-2T-MMS":"D7337-2T","D7337-2T-MBS":"D7337-2T","D7337-2T-MLV":"D7337-2T","D7337-2T-MDG":"D7337-2T","D7337G-4RBR":"D7337-4","D7337-4LL":"D7337-4","D7337-4LV":"D7337-4","D7337-4BR":"D7337-4","B7337-424BR":"B7337-424","B7337-424LV":"B7337-424","B7337-424ZS":"B7337-424","B7337-424FS":"B7337-424","B7337-424BL":"B7337-424","B7337-424LL":"B7337-424","B7337-424PP":"B7337-424","B7337-424NA":"B7337-424","B7337-430BR":"B7337-430","B7337-430LV":"B7337-430","B7337-430LL":"B7337-430","B7337-430ZS":"B7337-430","B7337-430BL":"B7337-430","B2132-26BS-3":"B2132-26-S3","B2132-26HS-3":"B2132-26-S3","B2132-26BS-1":"B2132-26-S1","B2132-26HS-1":"B2132-26-S1","B2132-26BS":"B2132-26","B2132-26HS":"B2132-26","B2132-26-MMS":"B2132-26","B2132-26-MGR":"B2132-26","B2132-26-PBR":"B2132-26","B2132-26-PHS":"B2132-26","O7512BS":"O7512","O7512-XMS":"O7512","O7512-XLV":"O7512","O7512HS":"O7512","L2088BS":"L2088","L2088MS":"L2088","L2088LL":"L2088","L2088-DBR":"L2088","D2118-1BS":"D2118-1","D2118-1HS":"D2118-1","D2118-1FS":"D2118-1","D2118-1-MMS":"D2118-1","D2118-1-RGL":"D2118-1","D2118-1-RBS":"D2118-1","D2118-1-RBR":"D2118-1","D7601MS":"D7601","D7601GR":"D7601","D7601BS":"D7601","D7601HS":"D7601","B24184C-26-PBR":"B24184-26","B24184H-26-PMS":"B24184-26","B24184C-26-MMS":"B24184-26","B24184H-26-MMS":"B24184-26","L25073MB-MMS":"L25073","L25073MHT-MMS":"L25073","D24035BS":"D24035","D24035HS":"D24035","D24035FS":"D24035","D24166B-MMS":"D24166","D24166HT-MMS":"D24166","D24166HT-MGR":"D24166","D25016B-MMS":"D25016","D25016HT-MMS":"D25016","D25037H-MMS":"D25037","D25037B-MMS":"D25037","D7337-5THS-4":"D7337-5T-S4","D7337-5TBS-4":"D7337-5T-S4","D7337-5THS":"D7337-5T","D7337-5TBS":"D7337-5T","D7337-5TGR":"D7337-5T","D24053-2-PBR":"D24053-2","D24053-2-MMS":"D24053-2","D24053-2-MGR":"D24053-2","B23133-26":"B23133-26","B23133-26-MMS":"B23133-26","B23133-26-MDG":"B23133-26","L24223-MGR":"L24223","L24223-MMS":"L24223","D24221MB-QBS":"D24221","D24221MB-MMS":"D24221","D2063BS":"D2063","D2062BS":"D2062","B7339-26MS":"B7339-26","B7339-26HS":"B7339-26","D7337-4THS":"D7337-4T","D7337-4TBS":"D7337-4T","D7337-4TBL":"D7337-4T","B7337-4226-4TBS":"B7337-26-4T","B7337-4226-4TGL":"B7337-26-4T","B7337-4226-4TBBS":"B7337-26-4T","B7337-4226-4TBGL":"B7337-26-4T","D2171BS":"D2171","D2171HS":"D2171","D2171-MMS":"D2171","D2171-MGR":"D2171","D7341GL":"D7341","D7341HS":"D7341","D7341BL":"D7341","D7341GR":"D7341","D7409GR":"D7409","D7409BL":"D7409","D7409GL":"D7409","D7409HS":"D7409","D23285MS":"D23285","D23285MH":"D23285","D23285GL":"D23285","L2143-8BS":"L2143-8","L2143-8FS":"L2143-8","D24001BS":"D24001","D24001HS":"D24001","D24001FS":"D24001","D2351-QBS":"D2351","D2351-MMS":"D2351","D2351-RGL":"D2351","B2158MHT-26-MMS":"B2158-26","B2158MHT-26-MGR":"B2158-26","B2158MB-26-MMS":"B2158-26","B2158MB-26-MGR":"B2158-26","D7524BS-1":"D7524-S1","D7524HS-1":"D7524-S1","D7524GR-1":"D7524-S1","D7524FS-1":"D7524-S1","D7524BS-2":"D7524-S2","D7524HS-2":"D7524-S2","D7524ML-2":"D7524-S2","B7337-426BS":"B7337-426","B7337-426QK":"B7337-426","B7337-426LV":"B7337-426","D2373-2-MMS":"D2373-2","D2373-2-MGR":"D2373-2","D2373-2-MLV":"D2373-2","D2373-2-MHS":"D2373-2","D23210-MMS":"D23210","D23210-QBS":"D23210","B23175SW-26-PBR":"B23175-26","B23175SW-26-PHS":"B23175-26","B23175SW-26-QBS":"B23175-26","B23175SW-26-QHS":"B23175-26","L2353-3-QBS":"L2353-3","L2353-3-MMS":"L2353-3","L2353-3-RGL":"L2353-3","D7339PHS":"D7339","D7339PBR":"D7339","D7339PLV":"D7339","D7339PBL":"D7339","D7339MS":"D7339","D7339HS":"D7339","D7339QK":"D7339","B7339S-26PHS":"B7339-26","B7339S-26PBR":"B7339-26","B7339S-26PLV":"B7339-26","B7339S-26PBL":"B7339-26","B7337-4224-9TGL":"B7337-24-9T","B7337-4224-9TBR":"B7337-24-9T","B7337-4224-9TBS":"B7337-24-9T","B7337-4224-9THS":"B7337-24-9T","B7337-4224-2THS":"B7337-24-2T","B7337-4224-2TGL":"B7337-24-2T","B7337-4224-2TYL":"B7337-24-2T","B7337-4224-2TBL":"B7337-24-2T","D2007BL":"D2007","D2007GL":"D2007","D2007YL":"D2007","D2007BR":"D2007","D2007TP":"D2007","D2143BS":"D2143","D2143FS":"D2143","D7337-4BS":"D7337-4","D7337-4QK":"D7337-4","D2182-1BS":"D2182-1","D2182-1HS":"D2182-1","O2111ARMH":"O2111","O2111ARGL":"O2111","O2111ARYL":"O2111","O2111ARHS":"O2111","B7409-26PLV":"B7409-26","B7409-26PBR":"B7409-26","B7409-26GL":"B7409-26","B7409-26HS":"B7409-26","B7409-26MS":"B7409-26","B7409-26BL":"B7409-26","B7409M-26BS":"B7409-26","D23117PBR":"D23117","D23117PHS":"D23117","D23117BS":"D23117","D23117HS":"D23117","D2107MS":"D2107","D2107BS":"D2107","D2107BS-2":"D2107-S2","D2107MS-2":"D2107-S2","D2133YL":"D2133","D2133HS":"D2133","D2133TBS":"D2133","D2133THS":"D2133","D2347BS":"D2347","B7601MH-26BS":"B7601-26","B7601MH-26MS":"B7601-26","D7337-2TAGL":"D7337-2T","D7337-2TAHS":"D7337-2T","D7518BS":"D7518","D7518PBR":"D7518","D7518PHS":"D7518","L2088THS":"L2088","D2120BS":"D2120","139406":"139406","139410":"139410","139398":"139398","139399":"139399","L2178BS":"L2178","D2151BS":"D2151","D2151MS":"D2151","B2071-26HS":"B2071-26","B2071-26GR":"B2071-26","D7337-5TAHS":"D7337-5T","D7337-5TABS":"D7337-5T","B7337-5424THS":"B7337-5424T","B7337-5424TBS":"B7337-5424T","B7337-5424THS-4":"B7337-5424T-4","B7337-5424TBS-4":"B7337-5424T-4","B7337-524THS":"B7337-524T","B7337-524TBS":"B7337-524T","D7534LV":"D7534","D7534LL":"D7534","O7409GR":"O7409","O7409FS":"O7409","O7409HS":"O7409","O7409GL":"O7409","O7409ML":"O7409","B7340-230GL":"B7340-30","B7340-230HS":"B7340-30","B7340-230GR":"B7340-30","B7340-230LV":"B7340-30","B7507S-226ZS":"B7507-26","B7507S-226HS":"B7507-26","B7507S-230ZS":"B7507-30","B7507S-230HS":"B7507-30","B7257-230ZS":"B7257-30","B7257-230HS":"B7257-30","D7406LV":"D7406","D7406FS":"D7406","O7504YL":"O7504","O7504LV":"O7504","O7504FS":"O7504","MY-9420FS":"MY-9420","MY-9420LV":"MY-9420","MY-9420YL":"MY-9420","D7012MS":"D7012","D7012GR":"D7012","L7337LV":"L7337","L7337BR":"L7337","L3771SYL":"L3771","L3771SGR":"L3771","L3771SHS":"L3771","L3771SFYL":"L3771","L3771SFGR":"L3771","L3771SFHS":"L3771","D2151SBS":"D2151","D2151SGL":"D2151"},"sampleOrder":{"name":"WWWRR26136","items":[{"sku":"D24064-RGL","l":52.0,"w":40.5,"h":46.5,"qty":30},{"sku":"D24064-RBR","l":52.0,"w":40.5,"h":46.5,"qty":10},{"sku":"D24164-QBS","l":49.0,"w":49.0,"h":46.0,"qty":30},{"sku":"D24164-MMS","l":49.0,"w":49.0,"h":46.0,"qty":50},{"sku":"D24164-RGL","l":49.0,"w":49.0,"h":46.0,"qty":90},{"sku":"D25006MB-MMS","l":72.0,"w":64.0,"h":55.0,"qty":35},{"sku":"D25006MZ-MMS","l":72.0,"w":64.0,"h":55.0,"qty":25},{"sku":"L24026-110-MMS","l":91.0,"w":32.0,"h":44.0,"qty":40},{"sku":"L24026-110-QGL","l":91.0,"w":32.0,"h":44.0,"qty":24},{"sku":"L24026-110-QBR","l":91.0,"w":32.0,"h":44.0,"qty":29},{"sku":"L24026-110-RGL","l":91.0,"w":32.0,"h":44.0,"qty":20},{"sku":"B25228-26-MMS","l":67.0,"w":50.0,"h":60.0,"qty":20},{"sku":"B25228-26-MGR","l":67.0,"w":50.0,"h":60.0,"qty":20},{"sku":"B25228-26-PBR","l":67.0,"w":50.0,"h":60.0,"qty":20},{"sku":"B25015-24HT","l":62.0,"w":19.0,"h":60.0,"qty":16},{"sku":"L2088MS","l":104.0,"w":17.0,"h":37.0,"qty":16}]}};
