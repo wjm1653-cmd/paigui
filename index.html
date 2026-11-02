@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.57">
+<html lang="zh-CN" data-ver="2026.1021.58">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.57</title>
+<title>智能排柜工具 v2026.1021.58</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.57</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.58</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4099,26 +4099,28 @@ function runPack() {
     var tryK = function (K) {
       var res = packPool(poolFor(K));
       var unO = res.unplaced.filter(function (u) { return u.id !== sacInfo.gid; }).reduce(function (s, u) { return s + u.qty; }, 0);
-      return { K: K, res: res, unO: unO };
+      var placedSac = 0;
+      res.containers.forEach(function (c) { c.boxes.forEach(function (b) { if (b.g === sacInfo.gid) placedSac++; }); });
+      return { K: K, res: res, unO: unO, leftover: sacTot - placedSac };
     };
     toast('正在计算「' + S.groups[sacInfo.gid].spu + '」最少剩几箱, 请稍候…');
     var coarse = [0, Math.ceil(sacTot * 0.25), Math.ceil(sacTot * 0.5), Math.ceil(sacTot * 0.75), sacTot];
     var best = null, failK = -1, fallback = null;
     coarse.forEach(function (K) {
       var e = tryK(K);
-      if (!fallback || e.unO < fallback.unO) fallback = e;
-      if (e.unO === 0) { if (!best || K < best.K) best = e; } else if (K > failK) failK = K;
+      if (!fallback || e.unO * 1000 + e.leftover < fallback.unO * 1000 + fallback.leftover) fallback = e;
+      if (e.unO === 0) { if (!best || e.leftover < best.leftover) best = e; } else if (K > failK) failK = K;
     });
     if (best && failK >= 0 && best.K - failK > 1) {
       for (var it2 = 0; it2 < 3; it2++) {
         var mid = Math.ceil((failK + best.K) / 2);
         if (mid >= best.K || mid <= failK) break;
         var e2 = tryK(mid);
-        if (e2.unO === 0) best = e2; else failK = mid;
+        if (e2.unO === 0) { if (!best || e2.leftover < best.leftover) best = e2; } else failK = mid;
       }
     }
     result = (best || fallback).res;
-    toast('「' + S.groups[sacInfo.gid].spu + '」最少剩 ' + (best ? best.K : sacTot) + ' 箱(其余全装)');
+    toast('「' + S.groups[sacInfo.gid].spu + '」最少剩 ' + ((best || fallback).leftover) + ' 箱(其余全装)');
   } else result = packPool(S.groups);
   // 牺牲组回填: 排完后有空隙再塞几箱(可摞高)
   if (sacInfo) {
@@ -4131,7 +4133,7 @@ function runPack() {
     });
     var cap8 = S.capVol != null ? S.capVol : L * W * H / 1e6;
     var g8 = 0;
-    var leftS = (best || fallback).K; // 回填额度 = 被剔除的K箱
+    var leftS = (best || fallback).leftover; // 回填额度 = 当前剩余的牺牲组箱数
     while (leftS > 0 && g8++ < 300) {
       var placed8 = false;
       for (var ci8 = 0; ci8 < result.containers.length && leftS > 0; ci8++) {
