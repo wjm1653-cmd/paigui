@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.55">
+<html lang="zh-CN" data-ver="2026.1021.56">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.55</title>
+<title>智能排柜工具 v2026.1021.56</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.55</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.56</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -334,6 +334,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
       </div>
       <div class="dim-row" style="margin-top:8px">
         <label style="flex:2">📦 单柜体积上限(m³)<input type="number" id="capVol" value="69.5" min="1" max="200" step="0.1"></label>
+        <label style="flex:2;margin-top:6px">🎯 装不下优先剩<input type="text" id="sacSku" placeholder="SKU或SPU(可前缀), 如 D25060-RGL" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px"></label>
         <label style="flex:1;color:var(--warn);justify-content:flex-end;font-size:11px">装载不超此方数</label>
       </div>
     </div>
@@ -4026,16 +4027,32 @@ function runPack() {
   S.capVol = capVol;
   S.groups = PackLib.buildGroups(S.items, S.spuMap);
   if (!S.groups.length) return toast('无有效数据', true);
+  // 装不下优先剩(临时需求通用化): 该SKU先不排, 最后有空间再回填
+  var sacInfo = null;
+  var sacNames = (($('sacSku') && $('sacSku').value.trim()) || '').split(/[,s]+/).filter(Boolean);
+  if (sacNames.length) {
+    S.groups.forEach(function (g) {
+      if (sacInfo) return;
+      if (sacNames.some(function (nm) { return g.spu === nm || g.spu.indexOf(nm) === 0; })) sacInfo = { gid: g.id, n: g.qty };
+      else {
+        var hit = g.skus.filter(function (s) { return sacNames.some(function (nm) { return s.sku === nm || s.sku.indexOf(nm) === 0; }); });
+        var hn = hit.reduce(function (s, x) { return s + x.qty; }, 0);
+        if (hn > 0) sacInfo = { gid: g.id, n: Math.min(hn, g.qty) };
+      }
+    });
+  }
+  var pool = sacInfo ? S.groups.map(function (g) { return g.id === sacInfo.gid ? Object.assign({}, g, { qty: g.qty - sacInfo.n }) : g; }).filter(function (g) { return g.qty > 0; }) : S.groups;
+  if (sacInfo) toast('优先剩: ' + S.groups[sacInfo.gid].spu + ' ' + sacInfo.n + '箱(最后有空隙再回填)');
 
   if (S.mode === 'single') {
-    var r = PackLib.packContainerBest({ L: L, W: W, H: H }, S.groups, { volumeCap: capVol });
-    var un0 = leftovers(S.groups, r).reduce(function (s, u) { return s + u.qty; }, 0);
+    var r = PackLib.packContainerBest({ L: L, W: W, H: H }, pool, { volumeCap: capVol });
+    var un0 = leftovers(pool, r).reduce(function (s, u) { return s + u.qty; }, 0);
     if (un0 > 0) {
       // 救援: 逐组当优先组硬约束重排, 取剩余最少/体积最大者, 最后回填零头
       S.groups.forEach(function (pg) {
         try {
-          var r2 = PackLib.packContainerBest({ L: L, W: W, H: H }, S.groups, { volumeCap: capVol, prioIds: [pg.id], prioFirst: true });
-          var un2 = leftovers(S.groups, r2).reduce(function (s, u) { return s + u.qty; }, 0);
+          var r2 = PackLib.packContainerBest({ L: L, W: W, H: H }, pool, { volumeCap: capVol, prioIds: [pg.id], prioFirst: true });
+          var un2 = leftovers(pool, r2).reduce(function (s, u) { return s + u.qty; }, 0);
           var v1 = 0, v2 = 0;
           r.boxes.forEach(function (b) { v1 += b.l * b.w * b.h; });
           r2.boxes.forEach(function (b) { v2 += b.l * b.w * b.h; });
@@ -4043,7 +4060,7 @@ function runPack() {
         } catch (e) { }
       });
       var remR = {};
-      S.groups.forEach(function (g) { remR[g.id] = g.qty; });
+      pool.forEach(function (g) { remR[g.id] = g.qty; });
       r.boxes.forEach(function (b) { remR[b.g]--; });
       var gR = 0;
       while (gR++ < 100) {
@@ -4065,12 +4082,65 @@ function runPack() {
         if (!placedR) break;
       }
     }
+    if (sacInfo) { // 回填牺牲组(可摞高, 零头允许)
+      var sg = S.groups[sacInfo.gid];
+      var nLeft = sacInfo.n;
+      var fb = function () {
+        var g6 = 0;
+        while (nLeft > 0 && g6++ < 100) {
+          var c6 = r;
+          var v6 = 0;
+          r.boxes.forEach(function (b) { v6 += b.l * b.w * b.h; });
+          var pl6 = PackLib.fitPlacements(r.freeBoxes || [], sg.l, sg.w, sg.h, nLeft, capVol != null ? capVol * 1e6 - v6 : null, 0);
+          var ghost = r.boxes.slice();
+          var ok6 = [];
+          pl6.forEach(function (p) {
+            if (PackLib.isSupported(p, ghost)) { ok6.push(p); ghost.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
+          });
+          if (!ok6.length) break;
+          ok6.forEach(function (p) { r.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg.id, sku: sg.skus[0].sku }); nLeft--; });
+          r.freeBoxes = PackLib.clipFree(r.freeBoxes || [], ok6);
+        }
+      };
+      try { fb(); } catch (e) { }
+    }
     S.result = { containers: [r], unplaced: leftovers(S.groups, r) };
   } else {
     // 多柜模式: 用满"单柜体积上限"设置; 同柜优先SPU临时需求已按要求移除
     var multiCap = Math.min(parseFloat($('capVol').value) || 69.5, L * W * H / 1e6);
     var nCt = parseInt($('numCt') && $('numCt').value, 10) || 0; // 指定柜数(不填=自动)
-    var all = PackLib.packAll({ L: L, W: W, H: H }, S.groups, nCt > 0 ? nCt : 10, { volumeCap: multiCap, prioIds: null });
+    var all = PackLib.packAll({ L: L, W: W, H: H }, pool, nCt > 0 ? nCt : 10, { volumeCap: multiCap, prioIds: null });
+    if (sacInfo) { // 回填牺牲组到各柜空隙
+      var sg2 = S.groups[sacInfo.gid];
+      var nLeft2 = sacInfo.n;
+      var recomputeF2 = function (c) {
+        var f2 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+        c.boxes.forEach(function (b) { f2 = PackLib.clipFree(f2, [b]); });
+        c.freeBoxes = f2;
+      };
+      all.containers.forEach(recomputeF2);
+      var g7 = 0;
+      while (nLeft2 > 0 && g7++ < 200) {
+        var placed7 = false;
+        for (var ci7 = 0; ci7 < all.containers.length && nLeft2 > 0; ci7++) {
+          var c7 = all.containers[ci7];
+          var v7 = 0;
+          c7.boxes.forEach(function (b) { v7 += b.l * b.w * b.h; });
+          if (multiCap * 1e6 - v7 < sg2.l * sg2.w * sg2.h) continue;
+          var pl7 = PackLib.fitPlacements(c7.freeBoxes || [], sg2.l, sg2.w, sg2.h, nLeft2, multiCap * 1e6 - v7, 0);
+          var ghost7 = c7.boxes.slice();
+          var ok7 = [];
+          pl7.forEach(function (p) {
+            if (PackLib.isSupported(p, ghost7)) { ok7.push(p); ghost7.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
+          });
+          if (!ok7.length) continue;
+          ok7.forEach(function (p) { c7.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg2.id, sku: sg2.skus[0].sku }); nLeft2--; });
+          recomputeF2(c7);
+          placed7 = true;
+        }
+        if (!placed7) break;
+      }
+    }
     S.result = { containers: all.containers, unplaced: all.unplaced };
   }
   processResult();
