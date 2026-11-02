@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.56">
+<html lang="zh-CN" data-ver="2026.1021.57">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.56</title>
+<title>智能排柜工具 v2026.1021.57</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.56</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.57</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4029,7 +4029,7 @@ function runPack() {
   if (!S.groups.length) return toast('无有效数据', true);
   // 装不下优先剩(临时需求通用化): 该SKU先不排, 最后有空间再回填
   var sacInfo = null;
-  var sacNames = (($('sacSku') && $('sacSku').value.trim()) || '').split(/[,s]+/).filter(Boolean);
+  var sacNames = (($('sacSku') && $('sacSku').value.trim()) || '').split(/[,，s]+/).filter(Boolean);
   if (sacNames.length) {
     S.groups.forEach(function (g) {
       if (sacInfo) return;
@@ -4044,105 +4044,118 @@ function runPack() {
   var pool = sacInfo ? S.groups.map(function (g) { return g.id === sacInfo.gid ? Object.assign({}, g, { qty: g.qty - sacInfo.n }) : g; }).filter(function (g) { return g.qty > 0; }) : S.groups;
   if (sacInfo) toast('优先剩: ' + S.groups[sacInfo.gid].spu + ' ' + sacInfo.n + '箱(最后有空隙再回填)');
 
-  if (S.mode === 'single') {
-    var r = PackLib.packContainerBest({ L: L, W: W, H: H }, pool, { volumeCap: capVol });
-    var un0 = leftovers(pool, r).reduce(function (s, u) { return s + u.qty; }, 0);
-    if (un0 > 0) {
-      // 救援: 逐组当优先组硬约束重排, 取剩余最少/体积最大者, 最后回填零头
-      S.groups.forEach(function (pg) {
-        try {
-          var r2 = PackLib.packContainerBest({ L: L, W: W, H: H }, pool, { volumeCap: capVol, prioIds: [pg.id], prioFirst: true });
-          var un2 = leftovers(pool, r2).reduce(function (s, u) { return s + u.qty; }, 0);
-          var v1 = 0, v2 = 0;
-          r.boxes.forEach(function (b) { v1 += b.l * b.w * b.h; });
-          r2.boxes.forEach(function (b) { v2 += b.l * b.w * b.h; });
-          if (un2 < un0 || (un2 === un0 && v2 > v1)) { r = r2; un0 = un2; }
-        } catch (e) { }
-      });
-      var remR = {};
-      pool.forEach(function (g) { remR[g.id] = g.qty; });
-      r.boxes.forEach(function (b) { remR[b.g]--; });
-      var gR = 0;
-      while (gR++ < 100) {
-        var gidsR = Object.keys(remR).map(Number).filter(function (id) { return remR[id] > 0; });
-        if (!gidsR.length) break;
-        var placedR = false;
-        for (var giR = 0; giR < gidsR.length && !placedR; giR++) {
-          var g3 = S.groups[gidsR[giR]];
-          var vR = 0;
-          r.boxes.forEach(function (b) { vR += b.l * b.w * b.h; });
-          var plR = PackLib.fitPlacements(r.freeBoxes || [], g3.l, g3.w, g3.h, remR[g3.id], capVol * 1e6 - vR, 0)
-            .filter(function (p) { return PackLib.isSupported(p, r.boxes); });
-          if (!plR.length) continue;
-          var nbR = plR.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g3.id }; });
-          nbR.forEach(function (b) { r.boxes.push(b); remR[b.g]--; });
-          r.freeBoxes = PackLib.clipFree(r.freeBoxes || [], nbR);
-          placedR = true;
+  /* 打包函数(单柜/多柜), 可对任意池子重复调用 */
+  var packPool = function (poolG) {
+    if (S.mode === 'single') {
+      var r = PackLib.packContainerBest({ L: L, W: W, H: H }, poolG, { volumeCap: capVol });
+      var un0 = leftovers(poolG, r).reduce(function (s, u) { return s + u.qty; }, 0);
+      if (un0 > 0) {
+        poolG.forEach(function (pg) {
+          try {
+            var r2 = PackLib.packContainerBest({ L: L, W: W, H: H }, poolG, { volumeCap: capVol, prioIds: [pg.id], prioFirst: true });
+            var un2 = leftovers(poolG, r2).reduce(function (s, u) { return s + u.qty; }, 0);
+            var v1 = 0, v2 = 0;
+            r.boxes.forEach(function (b) { v1 += b.l * b.w * b.h; });
+            r2.boxes.forEach(function (b) { v2 += b.l * b.w * b.h; });
+            if (un2 < un0 || (un2 === un0 && v2 > v1)) { r = r2; un0 = un2; }
+          } catch (e) { }
+        });
+        var remR = {};
+        poolG.forEach(function (g) { remR[g.id] = g.qty; });
+        r.boxes.forEach(function (b) { remR[b.g]--; });
+        var gR = 0;
+        while (gR++ < 100) {
+          var gidsR = Object.keys(remR).map(Number).filter(function (id) { return remR[id] > 0; });
+          if (!gidsR.length) break;
+          var placedR = false;
+          for (var giR = 0; giR < gidsR.length && !placedR; giR++) {
+            var g3 = poolG.filter(function (x) { return x.id === gidsR[giR]; })[0] || S.groups[gidsR[giR]];
+            var vR = 0;
+            r.boxes.forEach(function (b) { vR += b.l * b.w * b.h; });
+            var plR = PackLib.fitPlacements(r.freeBoxes || [], g3.l, g3.w, g3.h, remR[g3.id], capVol != null ? capVol * 1e6 - vR : null, 0)
+              .filter(function (p) { return PackLib.isSupported(p, r.boxes); });
+            if (!plR.length) continue;
+            var nbR = plR.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g3.id }; });
+            nbR.forEach(function (b) { r.boxes.push(b); remR[b.g]--; });
+            r.freeBoxes = PackLib.clipFree(r.freeBoxes || [], nbR);
+            placedR = true;
+          }
+          if (!placedR) break;
         }
-        if (!placedR) break;
       }
+      return { containers: [r], unplaced: leftovers(S.groups, r) };
     }
-    if (sacInfo) { // 回填牺牲组(可摞高, 零头允许)
-      var sg = S.groups[sacInfo.gid];
-      var nLeft = sacInfo.n;
-      var fb = function () {
-        var g6 = 0;
-        while (nLeft > 0 && g6++ < 100) {
-          var c6 = r;
-          var v6 = 0;
-          r.boxes.forEach(function (b) { v6 += b.l * b.w * b.h; });
-          var pl6 = PackLib.fitPlacements(r.freeBoxes || [], sg.l, sg.w, sg.h, nLeft, capVol != null ? capVol * 1e6 - v6 : null, 0);
-          var ghost = r.boxes.slice();
-          var ok6 = [];
-          pl6.forEach(function (p) {
-            if (PackLib.isSupported(p, ghost)) { ok6.push(p); ghost.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
-          });
-          if (!ok6.length) break;
-          ok6.forEach(function (p) { r.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg.id, sku: sg.skus[0].sku }); nLeft--; });
-          r.freeBoxes = PackLib.clipFree(r.freeBoxes || [], ok6);
-        }
-      };
-      try { fb(); } catch (e) { }
-    }
-    S.result = { containers: [r], unplaced: leftovers(S.groups, r) };
-  } else {
-    // 多柜模式: 用满"单柜体积上限"设置; 同柜优先SPU临时需求已按要求移除
     var multiCap = Math.min(parseFloat($('capVol').value) || 69.5, L * W * H / 1e6);
-    var nCt = parseInt($('numCt') && $('numCt').value, 10) || 0; // 指定柜数(不填=自动)
-    var all = PackLib.packAll({ L: L, W: W, H: H }, pool, nCt > 0 ? nCt : 10, { volumeCap: multiCap, prioIds: null });
-    if (sacInfo) { // 回填牺牲组到各柜空隙
-      var sg2 = S.groups[sacInfo.gid];
-      var nLeft2 = sacInfo.n;
-      var recomputeF2 = function (c) {
-        var f2 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
-        c.boxes.forEach(function (b) { f2 = PackLib.clipFree(f2, [b]); });
-        c.freeBoxes = f2;
-      };
-      all.containers.forEach(recomputeF2);
-      var g7 = 0;
-      while (nLeft2 > 0 && g7++ < 200) {
-        var placed7 = false;
-        for (var ci7 = 0; ci7 < all.containers.length && nLeft2 > 0; ci7++) {
-          var c7 = all.containers[ci7];
-          var v7 = 0;
-          c7.boxes.forEach(function (b) { v7 += b.l * b.w * b.h; });
-          if (multiCap * 1e6 - v7 < sg2.l * sg2.w * sg2.h) continue;
-          var pl7 = PackLib.fitPlacements(c7.freeBoxes || [], sg2.l, sg2.w, sg2.h, nLeft2, multiCap * 1e6 - v7, 0);
-          var ghost7 = c7.boxes.slice();
-          var ok7 = [];
-          pl7.forEach(function (p) {
-            if (PackLib.isSupported(p, ghost7)) { ok7.push(p); ghost7.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
-          });
-          if (!ok7.length) continue;
-          ok7.forEach(function (p) { c7.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg2.id, sku: sg2.skus[0].sku }); nLeft2--; });
-          recomputeF2(c7);
-          placed7 = true;
-        }
-        if (!placed7) break;
+    var nCt = parseInt($('numCt') && $('numCt').value, 10) || 0;
+    var all = PackLib.packAll({ L: L, W: W, H: H }, poolG, nCt > 0 ? nCt : 10, { volumeCap: multiCap, prioIds: null });
+    return { containers: all.containers, unplaced: all.unplaced };
+  };
+  var result;
+  if (sacInfo) {
+    var sacTot = sacInfo.n;
+    var poolFor = function (K) {
+      return S.groups.map(function (g) { return g.id === sacInfo.gid ? Object.assign({}, g, { qty: g.qty - K }) : g; }).filter(function (g) { return g.qty > 0; });
+    };
+    var tryK = function (K) {
+      var res = packPool(poolFor(K));
+      var unO = res.unplaced.filter(function (u) { return u.id !== sacInfo.gid; }).reduce(function (s, u) { return s + u.qty; }, 0);
+      return { K: K, res: res, unO: unO };
+    };
+    toast('正在计算「' + S.groups[sacInfo.gid].spu + '」最少剩几箱, 请稍候…');
+    var coarse = [0, Math.ceil(sacTot * 0.25), Math.ceil(sacTot * 0.5), Math.ceil(sacTot * 0.75), sacTot];
+    var best = null, failK = -1, fallback = null;
+    coarse.forEach(function (K) {
+      var e = tryK(K);
+      if (!fallback || e.unO < fallback.unO) fallback = e;
+      if (e.unO === 0) { if (!best || K < best.K) best = e; } else if (K > failK) failK = K;
+    });
+    if (best && failK >= 0 && best.K - failK > 1) {
+      for (var it2 = 0; it2 < 3; it2++) {
+        var mid = Math.ceil((failK + best.K) / 2);
+        if (mid >= best.K || mid <= failK) break;
+        var e2 = tryK(mid);
+        if (e2.unO === 0) best = e2; else failK = mid;
       }
     }
-    S.result = { containers: all.containers, unplaced: all.unplaced };
+    result = (best || fallback).res;
+    toast('「' + S.groups[sacInfo.gid].spu + '」最少剩 ' + (best ? best.K : sacTot) + ' 箱(其余全装)');
+  } else result = packPool(S.groups);
+  // 牺牲组回填: 排完后有空隙再塞几箱(可摞高)
+  if (sacInfo) {
+    var sg3 = S.groups[sacInfo.gid];
+    var placedS = 0;
+    result.containers.forEach(function (c8) {
+      var f8 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+      c8.boxes.forEach(function (b) { f8 = PackLib.clipFree(f8, [b]); });
+      c8.freeBoxes = f8;
+    });
+    var cap8 = S.capVol != null ? S.capVol : L * W * H / 1e6;
+    var g8 = 0;
+    var leftS = (best || fallback).K; // 回填额度 = 被剔除的K箱
+    while (leftS > 0 && g8++ < 300) {
+      var placed8 = false;
+      for (var ci8 = 0; ci8 < result.containers.length && leftS > 0; ci8++) {
+        var c9 = result.containers[ci8];
+        var v9 = 0;
+        c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
+        if (cap8 * 1e6 - v9 < sg3.l * sg3.w * sg3.h) continue;
+        var pl8 = PackLib.fitPlacements(c9.freeBoxes || [], sg3.l, sg3.w, sg3.h, leftS, cap8 * 1e6 - v9, 0);
+        var ghost8 = c9.boxes.slice();
+        var ok8 = [];
+        pl8.forEach(function (p) {
+          if (PackLib.isSupported(p, ghost8)) { ok8.push(p); ghost8.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
+        });
+        if (!ok8.length) continue;
+        ok8.forEach(function (p) { c9.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg3.id, sku: sg3.skus[0].sku }); leftS--; placedS++; });
+        var f9 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+        c9.boxes.forEach(function (b) { f9 = PackLib.clipFree(f9, [b]); });
+        c9.freeBoxes = f9;
+        placed8 = true;
+      }
+      if (!placed8) break;
+    }
   }
+  S.result = result;
   processResult();
   // 初始化手动分柜矩阵
 
