@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1021.60">
+<html lang="zh-CN" data-ver="2026.1021.61">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1021.60</title>
+<title>智能排柜工具 v2026.1021.61</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.60</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1021.61</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -1710,8 +1710,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         if (px >= s.x && px <= s.x + s.l && py >= s.y && py <= s.y + s.w) { hit++; break; }
       }
     }
-    return hit / (N * N) >= 0.6;
-  }
+    return hit / (N * N) >= 0.6;  }
 
   /* ---------- 单柜排柜 ---------- */
   function packContainer(container, groups, opts) {
@@ -2024,8 +2023,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
               px >= c3.x && px <= c3.x + c3.l && py >= c3.y && py <= c3.y + c3.w) { hit++; break; }
           }
         }
-        return hit / (N * N) >= 0.3;
-      }
+        return hit / (N * N) >= 0.3;    }
       var fsX = new FreeSpace(L, W, H, 1);
       boxes.forEach(function (b) { fsX.place(b.x, b.y, b.z, b.l, b.w, b.h); });
       order.forEach(function (g) {
@@ -3564,7 +3562,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             var c9 = containers[ci9];
             var v9 = 0;
             c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
-            var pl9 = fitPlacements(c9.freeBoxes || [], gg.l, gg.w, gg.h, gg.qty, capM3 * 1e6 + 8e5 - v9, 0)
+            var pl9 = fitPlacements(c9.freeBoxes || [], gg.l, gg.w, gg.h, gg.qty, capM3 * 1e6 + 5e5 - v9, 0)
               .filter(function (p) { return isSupported(p, c9.boxes); });
             if (!pl9.length) continue;
             var nb9 = pl9.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: gg.id }; });
@@ -4158,6 +4156,61 @@ function runPack() {
     }
   }
   S.result = result;
+  // 悬空清理: 真实支撑<60%的箱抽出→只在能放稳的位置回填(不牺牲装载率)
+  (function defloat() {
+    var cap9 = S.capVol != null ? S.capVol : L * W * H / 1e6;
+    var dropped = {};
+    S.result.containers.forEach(function (c9) {
+      var badIdx = [];
+      c9.boxes.forEach(function (b, bi) {
+        if (b.z < 1) return;
+        var supA = 0;
+        c9.boxes.forEach(function (o) {
+          if (o === b) return;
+          if (Math.abs(o.z + o.h - b.z) < 0.6) {
+            var ox = Math.max(0, Math.min(b.x + b.l, o.x + o.l) - Math.max(b.x, o.x));
+            var oy = Math.max(0, Math.min(b.y + b.w, o.y + o.w) - Math.max(b.y, o.y));
+            supA += ox * oy;
+          }
+        });
+        if (supA / (b.l * b.w) < 0.6) { badIdx.push(bi); dropped[b.g] = (dropped[b.g] || 0) + 1; }
+      });
+      for (var k9 = badIdx.length - 1; k9 >= 0; k9--) c9.boxes.splice(badIdx[k9], 1);
+    });
+    if (!Object.keys(dropped).length) return;
+    // 回填(严格支撑): 逐柜试放
+    S.result.containers.forEach(function (c9) {
+      var f9 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+      c9.boxes.forEach(function (b) { f9 = PackLib.clipFree(f9, [b]); });
+      c9.freeBoxes = f9;
+    });
+    var gI = 0;
+    while (gI++ < 200) {
+      var done = false;
+      for (var gid9 in dropped) {
+        if (dropped[gid9] <= 0) continue;
+        var g9 = S.groups[Number(gid9)];
+        for (var ci9 = 0; ci9 < S.result.containers.length; ci9++) {
+          var cc9 = S.result.containers[ci9];
+          var v9 = 0;
+          cc9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
+          var pl9 = PackLib.fitPlacements(cc9.freeBoxes || [], g9.l, g9.w, g9.h, dropped[gid9], cap9 != null ? cap9 * 1e6 - v9 : null, 0)
+            .filter(function (p) { return PackLib.isSupported(p, cc9.boxes); });
+          if (!pl9.length) continue;
+          var nb9 = pl9.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g9.id }; });
+          nb9.forEach(function (b) { cc9.boxes.push(b); dropped[gid9]--; });
+          var f10 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+          cc9.boxes.forEach(function (b) { f10 = PackLib.clipFree(f10, [b]); });
+          cc9.freeBoxes = f10;
+          done = true;
+          break;
+        }
+        if (done) break;
+      }
+      if (!done) break;
+    }
+    S._droppedInfo = dropped;
+  })();
   processResult();
   // 初始化手动分柜矩阵
 
