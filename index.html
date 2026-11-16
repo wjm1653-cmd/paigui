@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.11">
+<html lang="zh-CN" data-ver="2026.1116.12">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.11</title>
+<title>智能排柜工具 v2026.1116.12</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.11</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.12</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4414,7 +4414,16 @@ function runPack() {
       for (var gid9 in dropped) {
         if (dropped[gid9] <= 0) continue;
         var g9 = S.groups[Number(gid9)];
-        for (var ci9 = 0; ci9 < S.result.containers.length; ci9++) {
+        // 容器顺序: 该组已有的多数柜优先(不制造新零头)
+        var contOrder = S.result.containers.map(function (cm9, ix9) {
+          var cN9 = 0;
+          cm9.boxes.forEach(function (b) { if (b.g === Number(gid9)) cN9++; });
+          return { ix: ix9, n: cN9 };
+        }).sort(function (a9, b9) { return b9.n - a9.n; });
+        for (var oiX = 0; oiX < contOrder.length; oiX++) {
+          var ci9 = contOrder[oiX].ix;
+          // 防零头: 该柜此组已有0箱且组总量>5 → 一次至少放5箱, 否则跳过这柜
+          if (contOrder[oiX].n === 0 && g9.qty > 5 && dropped[gid9] < 5) continue;
           var cc9 = S.result.containers[ci9];
           var v9 = 0;
           cc9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
@@ -5777,6 +5786,30 @@ function loadShareData(d) {
     c.usedLength = mx;
   });
   S.shared = true;
+  // 导入的旧方案同样剥碎(≤5零头移入未装), 与排柜规则一致
+  (function stripSmallImport() {
+    if (!S.result || S.result.containers.length < 2) return;
+    var removed2 = {};
+    S.result.containers.forEach(function (c) {
+      var cnt2 = {};
+      c.boxes.forEach(function (b) { cnt2[b.g] = (cnt2[b.g] || 0) + 1; });
+      var kill2 = {};
+      Object.keys(cnt2).map(Number).forEach(function (gid) {
+        if (cnt2[gid] <= 5 && S.groups[gid] && S.groups[gid].qty > 5) kill2[gid] = 1;
+      });
+      if (!Object.keys(kill2).length) return;
+      c.boxes = c.boxes.filter(function (b) {
+        if (kill2[b.g]) { removed2[b.g] = (removed2[b.g] || 0) + 1; return false; }
+        return true;
+      });
+    });
+    Object.keys(removed2).map(Number).forEach(function (gid) {
+      var ex2 = null;
+      S.result.unplaced.forEach(function (u) { if (u.id === gid) ex2 = u; });
+      if (ex2) ex2.qty += removed2[gid];
+      else { var g2i = S.groups[gid]; S.result.unplaced.push({ id: gid, spu: g2i.spu, skus: g2i.skus, l: g2i.l, w: g2i.w, h: g2i.h, qty: removed2[gid] }); }
+    });
+  })();
   // 只读模式: 同事打开只能看, 不能编辑
   var sp = $('sidePanel'); if (sp) sp.style.display = 'none';
   var bd = $('btnDrag'); if (bd) { bd.disabled = true; bd.title = '分享链接为只读'; }
