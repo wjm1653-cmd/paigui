@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.7">
+<html lang="zh-CN" data-ver="2026.1116.8">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.7</title>
+<title>智能排柜工具 v2026.1116.8</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.7</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.8</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3379,8 +3379,18 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         var per = g2.l * g2.w * g2.h / 1e6;
         var q3 = Math.min(g2.qty - rem.filter(function (x) { return x.id === g2.id; })[0].qty + g2.qty, 0); // placeholder
         var rq = rem.filter(function (x) { return x.id === g2.id; })[0].qty;
-        var q4 = Math.min(rq, Math.floor((FILL - curV(ti)) / per));
-        if (q4 >= 4 || (q4 > 0 && rq - q4 === 0)) { take(ti, g2.id, q4); moved = true; break; }
+        // 按子SKU整批切(原表格数量); 凑不出整批→兜底任意数量(利用率优先), 但不留<5零头
+        var roomV = FILL - curV(ti);
+        var q4 = 0;
+        g2.skus.forEach(function (s2) {
+          var lotV = s2.qty * per;
+          if (lotV <= roomV + 1e-9) { q4 += s2.qty; roomV -= lotV; }
+        });
+        if (q4 < 5) {
+          q4 = Math.min(rq, Math.floor(roomV / per));
+          if (q4 < 5 && rq - q4 !== 0) q4 = 0;
+        }
+        if (q4 > 0 && (q4 >= 5 || rq - q4 === 0)) { take(ti, g2.id, q4); moved = true; break; }
         for (var k3 = 0; k3 < n; k3++) if (curV(k3) + gv(g2) <= FILL) { take(k3, g2.id, rq); moved = true; break; }
         if (moved) break;
       }
@@ -3550,7 +3560,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       // 防碎: 本柜某组只装1~3箱且该组还有余量 → 退回留给后续柜(尽量不出现一个SKU在柜里只有零头)
       var fragIds = [];
       left.forEach(function (g) {
-        if (res.placed[g.id] > 0 && res.placed[g.id] <= 3 && g.qty > 3) fragIds.push(g.id);
+        if (res.placed[g.id] > 0 && res.placed[g.id] <= 4 && g.qty > 4) fragIds.push(g.id); // <5箱零头禁止
       });
       if (fragIds.length && containers.length < maxContainers) {
         var keep = [];
@@ -3585,14 +3595,14 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             if (volRoom <= 0) continue;
             var exN = 0;
             c2.boxes.forEach(function (b) { if (b.g === g2.id) exN++; });
-            if (containers.length > 1 && exN === 0 && g2.qty > 3) {
+            if (containers.length > 1 && exN === 0 && g2.qty > 4) {
               var whole = Math.min(fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0).filter(function (p) { return isSupported(p, c2.boxes); }).length, g2.qty);
               if (whole <= 3) continue; // 会形成≤3箱零头 → 不塞这柜
             }
             var pl2 = fitPlacements(c2.freeBoxes || [], g2.l, g2.w, g2.h, g2.qty, volRoom, 0)
               .filter(function (p) { return isSupported(p, c2.boxes); });
             if (!pl2.length) continue;
-            if (containers.length > 1 && exN > 0 && exN + pl2.length <= 3) continue; // 多柜时避免零头, 单柜塞满优先
+            if (containers.length > 1 && exN > 0 && exN + pl2.length <= 4) continue; // 多柜时避免零头, 单柜塞满优先
             var newBoxes = pl2.map(function (p) { return { x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g2.id }; });
             newBoxes.forEach(function (b) { c2.boxes.push(b); g2.qty--; });
             c2.freeBoxes = clipFree(c2.freeBoxes || [], newBoxes);
@@ -3670,7 +3680,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           if (blocked) continue;
           var dn = 0;
           dc.boxes.forEach(function (o) { if (o.g === b3.g) dn++; });
-          if (dn - 1 >= 1 && dn - 1 <= 3) continue; // 搬走后donor剩1~3箱零头 → 不搬
+          if (dn - 1 >= 1 && dn - 1 <= 4) continue; // 搬走后donor剩1~3箱零头 → 不搬
           var pl3 = fitPlacements(lc.freeBoxes || [], b3.l, b3.w, b3.h, 1, capM3 * 1e6 - volOfC(lc), 0)
             .filter(function (p) { return isSupported(p, lc.boxes); });
           if (!pl3.length) continue;
@@ -4378,6 +4388,7 @@ function leftoversMulti(groups, assign) {
 
 /* 给每箱分配子SKU(同组内按顺序消耗) + 序号 */
 function processResult() {
+  S._skuSeq = {}; // 重置子SKU连续编号
   // 真实装柜顺序: 从柜子里头(x小)往柜门(x大), 由下往上堆 — 动画/装箱单/分享均按此顺序
   (S.result && S.result.containers || []).forEach(function (c) {
     c.boxes.sort(function (a, b) { return a.x - b.x || a.z - b.z || a.y - b.y; });
@@ -4387,10 +4398,12 @@ function processResult() {
     // 统一按真实装卸顺序排列: 由里到外(距柜头近的先), 同位置先下后上 → 动画/明细/装箱单一致
     c.boxes.sort(function (a, b) { return a.x - b.x || a.z - b.z || a.y - b.y; });
     var per = {};
+    S._skuSeq = S._skuSeq || {}; // 跨柜连续编号: 各子SKU总数严格=订单数量(按原表格顺序)
     c.boxes.forEach(function (b) {
       var g = S.groups[b.g];
       per[g.id] = per[g.id] || { n: 0 };
-      var idx = per[g.id].n++;
+      S._skuSeq[g.id] = S._skuSeq[g.id] || 0;
+      var idx = S._skuSeq[g.id]++;
       // 顺序分配子SKU
       var acc = 0, sku = g.skus[0].sku;
       for (var i = 0; i < g.skus.length; i++) {
