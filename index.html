@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.10">
+<html lang="zh-CN" data-ver="2026.1116.11">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.10</title>
+<title>智能排柜工具 v2026.1116.11</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.10</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.11</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3337,7 +3337,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           if (gA === gB) continue;
           var vA = gvOf(+gA, cm[gA]), vB = gvOf(+gB, cnts[cj][gB]);
           if (vA < 1.0 || Math.abs(vA - vB) > 1.2) continue;
-          if (++tried > 14 || Date.now() - t0 > 40000) break outer;
+          if (++tried > 14) break outer;
           var cmN = {}; for (var k1 in cm) cmN[k1] = cm[k1];
           var cjN = {}; for (var k2 in cnts[cj]) cjN[k2] = cnts[cj][k2];
           cmN[gB] = (cmN[gB] || 0) + cnts[cj][gB]; delete cmN[gA];
@@ -4356,6 +4356,30 @@ function runPack() {
     }
   }
   S.result = result;
+  // 剥碎保险(双保险): 某柜某SKU≤5箱且订单量>5 → 移出为未装
+  (function stripSmall() {
+    if (!S.result || S.result.containers.length < 2) return;
+    var removed = {};
+    S.result.containers.forEach(function (c) {
+      var cnt = {};
+      c.boxes.forEach(function (b) { cnt[b.g] = (cnt[b.g] || 0) + 1; });
+      var kill = {};
+      Object.keys(cnt).map(Number).forEach(function (gid) {
+        if (cnt[gid] <= 5 && S.groups[gid].qty > 5) kill[gid] = 1;
+      });
+      if (!Object.keys(kill).length) return;
+      c.boxes = c.boxes.filter(function (b) {
+        if (kill[b.g]) { removed[b.g] = (removed[b.g] || 0) + 1; return false; }
+        return true;
+      });
+    });
+    Object.keys(removed).map(Number).forEach(function (gid) {
+      var ex = null;
+      S.result.unplaced.forEach(function (u) { if (u.id === gid) ex = u; });
+      if (ex) ex.qty += removed[gid];
+      else S.result.unplaced.push({ id: gid, spu: S.groups[gid].spu, skus: S.groups[gid].skus, l: S.groups[gid].l, w: S.groups[gid].w, h: S.groups[gid].h, qty: removed[gid] });
+    });
+  })();
   // 悬空清理: 真实支撑<60%的箱抽出→只在能放稳的位置回填(不牺牲装载率)
   (function defloat() {
     var cap9 = S.capVol != null ? S.capVol : L * W * H / 1e6;
