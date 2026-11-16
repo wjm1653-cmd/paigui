@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.9">
+<html lang="zh-CN" data-ver="2026.1116.10">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.9</title>
+<title>智能排柜工具 v2026.1116.10</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.9</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.10</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3269,7 +3269,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
 
   /* 组交换均衡: 最空柜的难拼组 ↔ 其他柜等体积好拼组, 重排两柜验证, 极差变小才换(约30-60s) */
   /* 终末剥碎: 某柜某组≤5箱且该组总量>5 → 从该柜移除并入未装(宁可剩,不留零头) */
-  function stripSmallFragments(groups, result) {
+  function stripSmallFragments(container, groups, result) {
     if (!result || result.containers.length < 2) return;
     var removed = {};
     var gQty = {};
@@ -3288,6 +3288,9 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         else keep.push(b);
       });
       c.boxes = keep;
+      var fS = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+      keep.forEach(function (b) { fS = clipFree(fS, [b]); });
+      c.freeBoxes = fS; // 重算空隙: 加塞建议基于真实剩余空间
     });
     Object.keys(removed).map(Number).forEach(function (gid) {
       var ex = null;
@@ -3521,7 +3524,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       if (sc(rc) < sc(bestR2)) bestR2 = rc;
       try { swapBalancePass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
       try { mergeFragmentsPass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
-      try { stripSmallFragments(groups, bestR2); } catch (e) { }
+      try { stripSmallFragments(container, groups, bestR2); } catch (e) { }
       return bestR2;
     }
     return packAllInner(container, groups, maxContainers, opts);
