@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.4">
+<html lang="zh-CN" data-ver="2026.1116.5">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.4</title>
+<title>智能排柜工具 v2026.1116.5</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.4</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.5</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4387,6 +4387,10 @@ function processResult() {
               }
             });
             if (!plS.length) return;
+            // 规则: 本柜没有该SKU时, ≤5箱的零散加塞不建议(避免引新SKU零头)
+            var exN0 = 0;
+            c.boxes.forEach(function (b) { if (b.g === g.id) exN0++; });
+            if (exN0 === 0 && plS.length <= 5 && suggN[g.id] == null) return;
             if (volRoom != null) volRoom -= plS.length * g.l * g.w * g.h;
             sharedFree = PackLib.clipFree(sharedFree, plS);
             if (!suggN[g.id]) seq3.push(g.id);
