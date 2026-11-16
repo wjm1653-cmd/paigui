@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.6">
+<html lang="zh-CN" data-ver="2026.1116.7">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.6</title>
+<title>智能排柜工具 v2026.1116.7</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.6</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.7</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3205,6 +3205,68 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
 
   /* ---------- 多柜自动分柜 ---------- */
+  /* 同SKU合柜: 组交换后, 把散在其他柜的碎片(上方无箱的)搬回多数柜; 搬不动或会明显破坏均衡就保留 */
+  function mergeFragmentsPass(container, groups, containers, capM3) {
+    if (!containers || containers.length < 2) return;
+    var volOfC = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+    function recomputeFree(c) {
+      var f = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+      c.boxes.forEach(function (b) { f = clipFree(f, [b]); });
+      c.freeBoxes = f;
+    }
+    function spread() {
+      var vs = containers.map(volOfC);
+      return Math.max.apply(null, vs) - Math.min.apply(null, vs);
+    }
+    var failed = {};
+    var baseSpread = spread(); // 锚定初始极差: 合柜只允许小幅变差
+    var allowSp = Math.min(Math.max(baseSpread, 1.5) + 0.25, 3.0);
+    var guard = 0;
+    while (guard++ < 40) {
+      var byG2 = {};
+      containers.forEach(function (c, ci) { c.boxes.forEach(function (b) { (byG2[b.g] = byG2[b.g] || {})[ci] = (byG2[b.g][ci] || 0) + 1; }); });
+      var target = null;
+      Object.keys(byG2).map(Number).forEach(function (gid) {
+        if (failed[gid]) return;
+        var cis = byG2[gid];
+        var keys = Object.keys(cis);
+        if (keys.length < 2) return;
+        var maj = keys[0];
+        keys.forEach(function (k) { if (cis[k] > cis[maj]) maj = k; });
+        var frag = keys[0];
+        keys.forEach(function (k) { if (+k !== +maj && cis[k] < cis[frag]) frag = k; });
+        if (+frag === +maj) return;
+        if (!target || cis[frag] < target.n) target = { gid: gid, maj: +maj, frag: +frag, n: cis[frag] };
+      });
+      if (!target) break;
+      var fc = containers[target.frag], mc = containers[target.maj];
+      recomputeFree(mc);
+      var movedAny = false;
+      var cand = fc.boxes.filter(function (b) { return b.g === target.gid; }).slice().sort(function (a, b) { return b.z - a.z; });
+      for (var i = 0; i < cand.length; i++) {
+        var b = cand[i];
+        var blocked = fc.boxes.some(function (o) { return o !== b && o.z >= b.z + b.h - 0.5 && o.z < b.z + b.h + 0.5 && o.x < b.x + b.l - 0.5 && o.x + o.l > b.x + 0.5 && o.y < b.y + b.w - 0.5 && o.y + o.w > b.y + 0.5; });
+        if (blocked) continue;
+        var bv = b.l * b.w * b.h / 1e6;
+        if (volOfC(mc) + bv > capM3 + 0.001) continue;
+        // 均衡护栏: 搬完极差不许超过 max(2.5, 当前+0.4)
+        var vsA = containers.map(volOfC);
+        var spBefore = Math.max.apply(null, vsA) - Math.min.apply(null, vsA);
+        var vsB = vsA.slice(); vsB[target.maj] += bv; vsB[target.frag] -= bv;
+        var spAfter = Math.max.apply(null, vsB) - Math.min.apply(null, vsB);
+        if (spAfter > allowSp) { failed[target.gid] = 1; break; }
+        var pl = fitPlacements(mc.freeBoxes || [], b.l, b.w, b.h, 1, capM3 * 1e6 - volOfC(mc) * 1e6, 0)
+          .filter(function (p) { return isSupported(p, mc.boxes); });
+        if (!pl.length) continue;
+        mc.boxes.push({ x: pl[0].x, y: pl[0].y, z: pl[0].z, l: pl[0].l, w: pl[0].w, h: pl[0].h, g: b.g });
+        fc.boxes.splice(fc.boxes.indexOf(b), 1);
+        recomputeFree(mc);
+        movedAny = true;
+      }
+      if (!movedAny) { failed[target.gid] = 1; }
+    }
+  }
+
   /* 组交换均衡: 最空柜的难拼组 ↔ 其他柜等体积好拼组, 重排两柜验证, 极差变小才换(约30-60s) */
   function swapBalancePass(container, groups, containers, capM3) {
     if (!containers || containers.length < 2) return;
@@ -3410,6 +3472,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       var bestR2 = sc(ra) <= sc(rb) ? ra : rb;
       if (sc(rc) < sc(bestR2)) bestR2 = rc;
       try { swapBalancePass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
+      try { mergeFragmentsPass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
       return bestR2;
     }
     return packAllInner(container, groups, maxContainers, opts);
