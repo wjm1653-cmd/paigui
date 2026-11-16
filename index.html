@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.1">
+<html lang="zh-CN" data-ver="2026.1116.2">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.1</title>
+<title>智能排柜工具 v2026.1116.2</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.1</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.2</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3205,6 +3205,69 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
 
   /* ---------- 多柜自动分柜 ---------- */
+  /* 组交换均衡: 最空柜的难拼组 ↔ 其他柜等体积好拼组, 重排两柜验证, 极差变小才换(约30-60s) */
+  function swapBalancePass(container, groups, containers, capM3) {
+    if (!containers || containers.length < 2) return;
+    var volOfC = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+    var t0 = Date.now();
+    function counts(c) { var m = {}; c.boxes.forEach(function (b) { m[b.g] = (m[b.g] || 0) + 1; }); return m; }
+    function poolFrom(cs) {
+      return Object.keys(cs).map(Number).filter(function (g) { return cs[g] > 0; }).map(function (g) {
+        var gg = groups.filter(function (x) { return x.id === g; })[0];
+        return { id: g, spu: gg.spu, skus: gg.skus, l: gg.l, w: gg.w, h: gg.h, qty: cs[g] };
+      });
+    }
+    function spread(cs) {
+      var vs = cs.map(volOfC);
+      return Math.max.apply(null, vs) - Math.min.apply(null, vs);
+    }
+    var bestSpread = spread(containers);
+    if (bestSpread <= 0.85) return; // 已够均衡
+    var gvOf = function (gid, q) { var g = groups.filter(function (x) { return x.id === gid; })[0]; return g.l * g.w * g.h * q / 1e6; };
+    var cnts = containers.map(counts);
+    var tried = 0;
+    var minI = 0;
+    containers.forEach(function (c, i) { if (volOfC(c) < volOfC(containers[minI])) minI = i; });
+    var cm = cnts[minI];
+    outer:
+    for (var gA in cm) {
+      for (var cj = 0; cj < containers.length; cj++) {
+        if (cj === minI) continue;
+        for (var gB in cnts[cj]) {
+          if (gA === gB) continue;
+          var vA = gvOf(+gA, cm[gA]), vB = gvOf(+gB, cnts[cj][gB]);
+          if (vA < 1.0 || Math.abs(vA - vB) > 1.2) continue;
+          if (++tried > 16 || Date.now() - t0 > 75000) break outer;
+          var cmN = {}; for (var k1 in cm) cmN[k1] = cm[k1];
+          var cjN = {}; for (var k2 in cnts[cj]) cjN[k2] = cnts[cj][k2];
+          cmN[gB] = (cmN[gB] || 0) + cnts[cj][gB]; delete cmN[gA];
+          cjN[gA] = (cjN[gA] || 0) + cm[gA]; delete cjN[gB];
+          var rMin = packContainerBest(container, poolFrom(cmN), { volumeCap: capM3 });
+          var rOth = packContainerBest(container, poolFrom(cjN), { volumeCap: capM3 });
+          var plM = {}, plO = {};
+          rMin.boxes.forEach(function (b) { plM[b.g] = (plM[b.g] || 0) + 1; });
+          rOth.boxes.forEach(function (b) { plO[b.g] = (plO[b.g] || 0) + 1; });
+          var ok = true;
+          for (var kk in cmN) if (cmN[kk] - (plM[kk] || 0) > 0) ok = false;
+          for (var k3 in cjN) if (cjN[k3] - (plO[k3] || 0) > 0) ok = false;
+          if (!ok) continue;
+          var oldBoxes = [containers[minI].boxes, containers[cj].boxes];
+          containers[minI].boxes = rMin.boxes;
+          containers[cj].boxes = rOth.boxes;
+          var sp = spread(containers);
+          if (sp < bestSpread - 0.05) {
+            bestSpread = sp;
+            cm = cmN; cnts[minI] = cmN; cnts[cj] = cjN;
+            if (sp <= 0.85) break outer;
+          } else {
+            containers[minI].boxes = oldBoxes[0];
+            containers[cj].boxes = oldBoxes[1];
+          }
+        }
+      }
+    }
+  }
+
   function packAlloc(container, groups, maxContainers, opts) {
     opts = opts || {};
     var capM3 = opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6;
@@ -3331,7 +3394,9 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         var vs = r.containers.map(volOfP);
         return un * 1000 + (vs.length ? Math.max.apply(null, vs) - Math.min.apply(null, vs) : 0);
       }
-      return sc(ra) <= sc(rb) ? ra : rb;
+      var bestR2 = sc(ra) <= sc(rb) ? ra : rb;
+      try { swapBalancePass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
+      return bestR2;
     }
     return packAllInner(container, groups, maxContainers, opts);
   }
