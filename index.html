@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.2">
+<html lang="zh-CN" data-ver="2026.1116.3">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.2</title>
+<title>智能排柜工具 v2026.1116.3</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.2</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.3</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3237,20 +3237,23 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           if (gA === gB) continue;
           var vA = gvOf(+gA, cm[gA]), vB = gvOf(+gB, cnts[cj][gB]);
           if (vA < 1.0 || Math.abs(vA - vB) > 1.2) continue;
-          if (++tried > 16 || Date.now() - t0 > 75000) break outer;
+          if (++tried > 14 || Date.now() - t0 > 40000) break outer;
           var cmN = {}; for (var k1 in cm) cmN[k1] = cm[k1];
           var cjN = {}; for (var k2 in cnts[cj]) cjN[k2] = cnts[cj][k2];
           cmN[gB] = (cmN[gB] || 0) + cnts[cj][gB]; delete cmN[gA];
           cjN[gA] = (cjN[gA] || 0) + cm[gA]; delete cjN[gB];
-          var rMin = packContainerBest(container, poolFrom(cmN), { volumeCap: capM3 });
-          var rOth = packContainerBest(container, poolFrom(cjN), { volumeCap: capM3 });
+          // 轻量验证(单算法, 快5~10倍): 都装得下才进一步完整重排
+          var qMin = packWallSolid(container, poolFrom(cmN), { volumeCap: capM3 });
+          var qOth = packWallSolid(container, poolFrom(cjN), { volumeCap: capM3 });
           var plM = {}, plO = {};
-          rMin.boxes.forEach(function (b) { plM[b.g] = (plM[b.g] || 0) + 1; });
-          rOth.boxes.forEach(function (b) { plO[b.g] = (plO[b.g] || 0) + 1; });
+          qMin.boxes.forEach(function (b) { plM[b.g] = (plM[b.g] || 0) + 1; });
+          qOth.boxes.forEach(function (b) { plO[b.g] = (plO[b.g] || 0) + 1; });
           var ok = true;
           for (var kk in cmN) if (cmN[kk] - (plM[kk] || 0) > 0) ok = false;
           for (var k3 in cjN) if (cjN[k3] - (plO[k3] || 0) > 0) ok = false;
           if (!ok) continue;
+          var rMin = packContainerBest(container, poolFrom(cmN), { volumeCap: capM3 });
+          var rOth = packContainerBest(container, poolFrom(cjN), { volumeCap: capM3 });
           var oldBoxes = [containers[minI].boxes, containers[cj].boxes];
           containers[minI].boxes = rMin.boxes;
           containers[cj].boxes = rOth.boxes;
