@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.16">
+<html lang="zh-CN" data-ver="2026.1116.17">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.16</title>
+<title>智能排柜工具 v2026.1116.17</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.16</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.17</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4586,7 +4586,10 @@ function runPack() {
     if (S.result && S.result.containers.length < 2) return;
     var cap9 = S.capVol != null ? S.capVol : L * W * H / 1e6;
     var dropped = {};
-    S.result.containers.forEach(function (c9) {
+    var droppedHome = {};
+    var ci9home = 0;
+    S.result.containers.forEach(function (c9, ci9h) {
+      ci9home = ci9h;
       var badIdx = [];
       c9.boxes.forEach(function (b, bi) {
         if (b.z < 1) return;
@@ -4599,7 +4602,7 @@ function runPack() {
             supA += ox * oy;
           }
         });
-        if (supA / (b.l * b.w) < 0.6) { badIdx.push(bi); dropped[b.g] = (dropped[b.g] || 0) + 1; }
+        if (supA / (b.l * b.w) < 0.6) { badIdx.push(bi); dropped[b.g] = (dropped[b.g] || 0) + 1; droppedHome[b.g] = ci9home; }
       });
       for (var k9 = badIdx.length - 1; k9 >= 0; k9--) c9.boxes.splice(badIdx[k9], 1);
     });
@@ -4617,15 +4620,16 @@ function runPack() {
         if (dropped[gid9] <= 0) continue;
         var g9 = S.groups[Number(gid9)];
         // 容器顺序: 该组已有的多数柜优先(不制造新零头)
+        var home9 = droppedHome[gid9];
         var contOrder = S.result.containers.map(function (cm9, ix9) {
           var cN9 = 0;
           cm9.boxes.forEach(function (b) { if (b.g === Number(gid9)) cN9++; });
-          return { ix: ix9, n: cN9 };
-        }).sort(function (a9, b9) { return b9.n - a9.n; });
+          return { ix: ix9, n: cN9, home: home9 === ix9 ? 1 : 0 };
+        }).sort(function (a9, b9) { return b9.home - a9.home || b9.n - a9.n; }); // 原柜最优先
         for (var oiX = 0; oiX < contOrder.length; oiX++) {
           var ci9 = contOrder[oiX].ix;
           // 防零头: 该柜此组已有0箱且组总量>5 → 一次至少放5箱, 否则跳过这柜
-          if (contOrder[oiX].n === 0 && g9.qty > 5 && dropped[gid9] < 5) continue;
+          if (contOrder[oiX].n === 0 && !contOrder[oiX].home && g9.qty > 5 && dropped[gid9] < 5) continue; // 原柜不受限
           var cc9 = S.result.containers[ci9];
           var v9 = 0;
           cc9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
