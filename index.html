@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.13">
+<html lang="zh-CN" data-ver="2026.1116.14">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.13</title>
+<title>智能排柜工具 v2026.1116.14</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.13</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.14</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -3525,6 +3525,73 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       try { swapBalancePass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
       try { mergeFragmentsPass(container, groups, bestR2.containers, (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6)); } catch (e) { }
       try { stripSmallFragments(container, groups, bestR2); } catch (e) { }
+      // 终末找平: 剥碎后从最满柜搬顶层箱给最空柜, 压极差(利用率优先)
+      try {
+        (function topUp() {
+          var capT = (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6);
+          var volT = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+          var gT = 0;
+          while (gT++ < 120) {
+            var vs = bestR2.containers.map(volT);
+            var maxI = 0, minI = 0;
+            vs.forEach(function (v, i) { if (v > vs[maxI]) maxI = i; if (v < vs[minI]) minI = i; });
+            if (vs[maxI] - vs[minI] <= 1.0 || maxI === minI) break;
+            var dc = bestR2.containers[maxI], lc = bestR2.containers[minI];
+            var cand = dc.boxes.slice().sort(function (a, b) { return a.l * a.w * a.h - b.l * b.w * b.h; });
+            var moved = false;
+            for (var t1 = 0; t1 < cand.length; t1++) {
+              var bT = cand[t1];
+              var blocked = dc.boxes.some(function (o2) { return o2 !== bT && o2.z >= bT.z + bT.h - 0.5 && o2.z < bT.z + bT.h + 0.5 && o2.x < bT.x + bT.l - 0.5 && o2.x + o2.l > bT.x + 0.5 && o2.y < bT.y + bT.w - 0.5 && o2.y + o2.w > bT.y + 0.5; });
+              if (blocked) continue;
+              if (volT(lc) + bT.l * bT.w * bT.h / 1e6 > capT + 0.001) continue;
+              var fT = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+              lc.boxes.forEach(function (b2) { fT = clipFree(fT, [b2]); });
+              var plT = fitPlacements(fT, bT.l, bT.w, bT.h, 1, capT * 1e6 - volT(lc) * 1e6, 0).filter(function (p) { return isSupported(p, lc.boxes); });
+              if (!plT.length) continue;
+              lc.boxes.push({ x: plT[0].x, y: plT[0].y, z: plT[0].z, l: plT[0].l, w: plT[0].w, h: plT[0].h, g: bT.g });
+              dc.boxes.splice(dc.boxes.indexOf(bT), 1);
+              moved = true;
+              break;
+            }
+            if (!moved) break;
+          }
+        })();
+        // 终末回填: 找平后再试未装箱(优先已有该组的柜; 新柜须≥5箱整批)
+        (function finalRestuff() {
+          var capF = (opts && opts.volumeCap != null ? opts.volumeCap : container.L * container.W * container.H / 1e6);
+          var volF = function (c) { var v = 0; c.boxes.forEach(function (b) { v += b.l * b.w * b.h; }); return v / 1e6; };
+          var gF = 0;
+          while (gF++ < 200) {
+            var remF = bestR2.unplaced.filter(function (u) { return u.qty > 0; });
+            if (!remF.length) break;
+            var placedF = false;
+            for (var rf = 0; rf < remF.length && !placedF; rf++) {
+              var uf = remF[rf];
+              var gf = groups.filter(function (x) { return x.id === uf.id; })[0];
+              var orderF = bestR2.containers.map(function (cf, ix) {
+                var nF = 0;
+                cf.boxes.forEach(function (b) { if (b.g === uf.id) nF++; });
+                return { ix: ix, n: nF };
+              }).sort(function (a4, b4) { return b4.n - a4.n; });
+              for (var of2 = 0; of2 < orderF.length; of2++) {
+                var cF = bestR2.containers[orderF[of2].ix];
+                if (orderF[of2].n === 0 && gf.qty > 5 && uf.qty < 5) continue; // 新柜零头不放
+                if (volF(cF) + gf.l * gf.w * gf.h / 1e6 > capF + 0.001) continue;
+                var fF = [{ x: 0, y: 0, z: 0, l: container.L, w: container.W, h: container.H }];
+                cF.boxes.forEach(function (b) { fF = clipFree(fF, [b]); });
+                var plF = fitPlacements(fF, gf.l, gf.w, gf.h, uf.qty, capF * 1e6 - volF(cF) * 1e6, 0)
+                  .filter(function (p) { return isSupported(p, cF.boxes); });
+                if (!plF.length) continue;
+                plF.forEach(function (p) { cF.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: uf.id }); uf.qty--; });
+                placedF = true;
+                break;
+              }
+            }
+            if (!placedF) break;
+          }
+          bestR2.unplaced = bestR2.unplaced.filter(function (u) { return u.qty > 0; });
+        })();
+      } catch (e) { }
       return bestR2;
     }
     return packAllInner(container, groups, maxContainers, opts);
