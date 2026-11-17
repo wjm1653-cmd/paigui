@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.17">
+<html lang="zh-CN" data-ver="2026.1116.18">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.17</title>
+<title>智能排柜工具 v2026.1116.18</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.17</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.18</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4588,6 +4588,7 @@ function runPack() {
     var dropped = {};
     var droppedHome = {};
     var ci9home = 0;
+    var savedBoxes = [];
     S.result.containers.forEach(function (c9, ci9h) {
       ci9home = ci9h;
       var badIdx = [];
@@ -4602,7 +4603,7 @@ function runPack() {
             supA += ox * oy;
           }
         });
-        if (supA / (b.l * b.w) < 0.6) { badIdx.push(bi); dropped[b.g] = (dropped[b.g] || 0) + 1; droppedHome[b.g] = ci9home; }
+        if (supA / (b.l * b.w) < 0.6) { badIdx.push(bi); dropped[b.g] = (dropped[b.g] || 0) + 1; droppedHome[b.g] = ci9home; savedBoxes.push({ ci: ci9home, box: c9.boxes[bi] }); }
       });
       for (var k9 = badIdx.length - 1; k9 >= 0; k9--) c9.boxes.splice(badIdx[k9], 1);
     });
@@ -4648,6 +4649,24 @@ function runPack() {
       }
       if (!done) break;
     }
+    // 放不回去的: 原位恢复(全装下优先, 悬空好过未装)
+    (function restoreLeft() {
+      Object.keys(dropped).map(Number).forEach(function (gidR) {
+        while (dropped[gidR] > 0) {
+          var idxR = -1;
+          for (var iR = 0; iR < savedBoxes.length; iR++) if (savedBoxes[iR].box.g === gidR) { idxR = iR; break; }
+          if (idxR < 0) break;
+          var sv = savedBoxes.splice(idxR, 1)[0];
+          var cR = S.result.containers[sv.ci];
+          var bR = sv.box;
+          var clash = cR.boxes.some(function (oR) {
+            return bR.x < oR.x + oR.l - 0.5 && bR.x + bR.l > oR.x + 0.5 && bR.y < oR.y + oR.w - 0.5 && bR.y + bR.w > oR.y + 0.5 && bR.z < oR.z + oR.h - 0.5 && bR.z + bR.h > oR.z + 0.5;
+          });
+          if (!clash) { cR.boxes.push(bR); dropped[gidR]--; }
+          else break; // 原位被占则止步(该组剩余保持未装)
+        }
+      });
+    })();
     S._droppedInfo = dropped;
   })();
   processResult();
