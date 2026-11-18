@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1118.1">
+<html lang="zh-CN" data-ver="2026.1118.2">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -4817,14 +4817,19 @@ function runPack() {
       for (var ci = 0; ci < S.result.containers.length; ci++) {
         var c2 = S.result.containers[ci];
         var used = c2.boxes.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
-        var pl = PackLib.fitPlacements(c2.freeBoxes || [], g.l, g.w, g.h, rem,
-          capBk != null ? capBk - used : null, 0).filter(function (p) { return PackLib.isSupported(p, c2.boxes); });
-        for (var pi = 0; pi < pl.length; pi++) {
-          var p = pl[pi];
-          c2.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
-          placedNow[g.id] = (placedNow[g.id] || 0) + 1;
-        }
-        if (pl.length) {
+        // 迭代回填: 新放的箱可作为下一层的支撑(可摞高), 直到放不下
+        var guardBk = 0;
+        while (guardBk++ < 12) {
+          var pl = PackLib.fitPlacements(c2.freeBoxes || [], g.l, g.w, g.h, rem,
+            capBk != null ? capBk - used : null, 0).filter(function (p) { return PackLib.isSupported(p, c2.boxes); });
+          if (!pl.length) break;
+          for (var pi = 0; pi < pl.length && rem > 0; pi++) {
+            var p = pl[pi];
+            c2.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
+            placedNow[g.id] = (placedNow[g.id] || 0) + 1;
+            used += p.l * p.w * p.h;
+            rem--;
+          }
           var f2 = [{ x: 0, y: 0, z: 0, l: cont.L, w: cont.W, h: cont.H }];
           c2.boxes.forEach(function (b) { f2 = PackLib.clipFree(f2, [b]); });
           c2.freeBoxes = f2;
