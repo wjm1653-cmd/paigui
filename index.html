@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.21">
+<html lang="zh-CN" data-ver="2026.1116.22">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.21</title>
+<title>智能排柜工具 v2026.1116.22</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.21</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.22</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -334,7 +334,9 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
       </div>
       <div class="dim-row" style="margin-top:8px">
         <label style="flex:2">📦 单柜体积上限(m³)<input type="number" id="capVol" value="69.5" min="1" max="200" step="0.1"></label>
-        <label style="flex:2;margin-top:6px">🎯 装不下优先剩<input type="text" id="sacSku" placeholder="SKU或SPU(可前缀), 如 D25060-RGL" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px"></label>
+        <label style="flex:2;margin-top:6px">🎯 装不下优先剩①<input type="text" id="sacSku1" placeholder="第1优先剩SKU" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px"></label>
+        <label style="flex:2">🎯 优先剩②<input type="text" id="sacSku2" placeholder="第2优先(①不够再剩)" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px"></label>
+        <label style="flex:2">🎯 优先剩③<input type="text" id="sacSku3" placeholder="第3优先(②不够再剩)" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px"></label>
         <label style="flex:1;color:var(--warn);justify-content:flex-end;font-size:11px">装载不超此方数</label>
       </div>
     </div>
@@ -4417,6 +4419,8 @@ function buildPresets() {
 });
 
 /* ================= 排柜执行 ================= */
+var sacListBackfill = null;
+var bestLvRef = null;
 function runPack() {
   if (!S.items.length) return toast('请先上传订单表', true);
   var L = S.cont.L, W = S.cont.W, H = S.cont.H;
@@ -4426,21 +4430,24 @@ function runPack() {
   S.groups = PackLib.buildGroups(S.items, S.spuMap);
   if (!S.groups.length) return toast('无有效数据', true);
   // 装不下优先剩(临时需求通用化): 该SKU先不排, 最后有空间再回填
-  var sacInfo = null;
-  var sacNames = (($('sacSku') && $('sacSku').value.trim()) || '').split(/[,，s]+/).filter(Boolean);
-  if (sacNames.length) {
+  var sacList = []; // 优先剩SKU列表(有序, 最多3个): ①不够再剩②, ②不够再剩③
+  [1, 2, 3].forEach(function (ix) {
+    var el = $('sacSku' + ix);
+    var nm = el && el.value.trim();
+    if (!nm || sacList.some(function (x) { return x.nm === nm; })) return;
     S.groups.forEach(function (g) {
-      if (sacInfo) return;
-      if (sacNames.some(function (nm) { return g.spu === nm || g.spu.indexOf(nm) === 0; })) sacInfo = { gid: g.id, n: g.qty };
+      var found = sacList.some(function (x) { return x.gid === g.id; });
+      if (found) return;
+      var hn = 0;
+      if (g.spu === nm || g.spu.indexOf(nm) === 0) hn = g.qty;
       else {
-        var hit = g.skus.filter(function (s) { return sacNames.some(function (nm) { return s.sku === nm || s.sku.indexOf(nm) === 0; }); });
-        var hn = hit.reduce(function (s, x) { return s + x.qty; }, 0);
-        if (hn > 0) sacInfo = { gid: g.id, n: Math.min(hn, g.qty) };
+        var hit = g.skus.filter(function (s) { return s.sku === nm || s.sku.indexOf(nm) === 0; });
+        hn = hit.reduce(function (s, x) { return s + x.qty; }, 0);
       }
+      if (hn > 0) sacList.push({ gid: g.id, n: Math.min(hn, g.qty), nm: nm });
     });
-  }
-  var pool = sacInfo ? S.groups.map(function (g) { return g.id === sacInfo.gid ? Object.assign({}, g, { qty: g.qty - sacInfo.n }) : g; }).filter(function (g) { return g.qty > 0; }) : S.groups;
-  if (sacInfo) toast('优先剩: ' + S.groups[sacInfo.gid].spu + ' ' + sacInfo.n + '箱(最后有空隙再回填)');
+  });
+  var pool = S.groups; // 排柜池由下方优先剩逻辑动态构建
 
   /* 打包函数(单柜/多柜), 可对任意池子重复调用 */
   var packPool = function (poolG) {
@@ -4489,40 +4496,63 @@ function runPack() {
     return { containers: all.containers, unplaced: all.unplaced };
   };
   var result;
-  if (sacInfo) {
-    var sacTot = sacInfo.n;
-    var poolFor = function (K) {
-      return S.groups.map(function (g) { return g.id === sacInfo.gid ? Object.assign({}, g, { qty: g.qty - K }) : g; }).filter(function (g) { return g.qty > 0; });
-    };
-    var tryK = function (K) {
-      var res = packPool(poolFor(K));
-      var unO = res.unplaced.filter(function (u) { return u.id !== sacInfo.gid; }).reduce(function (s, u) { return s + u.qty; }, 0);
-      var placedSac = 0;
-      res.containers.forEach(function (c) { c.boxes.forEach(function (b) { if (b.g === sacInfo.gid) placedSac++; }); });
-      return { K: K, res: res, unO: unO, leftover: sacTot - placedSac };
-    };
-    toast('正在计算「' + S.groups[sacInfo.gid].spu + '」最少剩几箱, 请稍候…');
-    var coarse = [0, Math.ceil(sacTot * 0.25), Math.ceil(sacTot * 0.5), Math.ceil(sacTot * 0.75), sacTot];
-    var best = null, failK = -1, fallback = null;
-    coarse.forEach(function (K) {
-      var e = tryK(K);
-      if (!fallback || e.unO * 1000 + e.leftover < fallback.unO * 1000 + fallback.leftover) fallback = e;
-      if (e.unO === 0) { if (!best || e.leftover < best.leftover) best = e; } else if (K > failK) failK = K;
-    });
-    if (best && failK >= 0 && best.K - failK > 1) {
-      for (var it2 = 0; it2 < 3; it2++) {
-        var mid = Math.ceil((failK + best.K) / 2);
-        if (mid >= best.K || mid <= failK) break;
-        var e2 = tryK(mid);
-        if (e2.unO === 0) { if (!best || e2.leftover < best.leftover) best = e2; } else failK = mid;
+  if (sacList.length) {
+    // 多级优先剩: 先只牺牲①(①不够再②,再③); 每级内部扫最少剩箱
+    var bestLv = null; // {res, leftovers: {gid:n}, levelOk}
+    for (var lv = 0; lv < sacList.length && !bestLv; lv++) {
+      var sac0 = sacList[lv];
+      var sacTot = sac0.n;
+      var poolFor = function (K) {
+        return S.groups.map(function (g) {
+          var cut = 0;
+          for (var q1 = 0; q1 <= lv; q1++) {
+            if (sacList[q1].gid === g.id) cut = q1 < lv ? g.qty : K; // 前面的全剔, 当前的剔K
+          }
+          return cut ? Object.assign({}, g, { qty: g.qty - cut }) : g;
+        }).filter(function (g) { return g.qty > 0; });
+      };
+      var tryK = function (K) {
+        var res = packPool(poolFor(K));
+        var unO = res.unplaced.filter(function (u) {
+          return !sacList.some(function (x) { return x.gid === u.id; });
+        }).reduce(function (s, u) { return s + u.qty; }, 0);
+        var placedSac = 0;
+        res.containers.forEach(function (c) { c.boxes.forEach(function (b) { if (b.g === sac0.gid) placedSac++; }); });
+        return { K: K, res: res, unO: unO, leftover: sacTot - placedSac };
+      };
+      toast('正在计算「' + (sacList.map(function (x) { return x.nm; }).slice(0, lv + 1).join('→') + '」最少剩几箱, 请稍候…'));
+      var coarse = [0, Math.ceil(sacTot * 0.25), Math.ceil(sacTot * 0.5), Math.ceil(sacTot * 0.75), sacTot];
+      var bestL = null, failK = -1;
+      coarse.forEach(function (K) {
+        var e = tryK(K);
+        if (e.unO === 0) { if (!bestL || e.leftover < bestL.leftover) bestL = e; } else if (K > failK) failK = K;
+      });
+      if (bestL && failK >= 0 && bestL.K - failK > 1) {
+        for (var it2 = 0; it2 < 3; it2++) {
+          var mid = Math.ceil((failK + bestL.K) / 2);
+          if (mid >= bestL.K || mid <= failK) break;
+          var e2 = tryK(mid);
+          if (e2.unO === 0) { if (!bestL || e2.leftover < bestL.leftover) bestL = e2; } else failK = mid;
+        }
       }
+      if (bestL) bestLv = { res: bestL.res, sac0: sac0, leftover: bestL.leftover, level: lv };
     }
-    result = (best || fallback).res;
-    toast('「' + S.groups[sacInfo.gid].spu + '」最少剩 ' + ((best || fallback).leftover) + ' 箱(其余全装)');
+    if (!bestLv) { // 全部级都装不下其余货: 取第1级全剔结果兜底
+      var poolAll = S.groups.map(function (g) {
+        var cut = sacList.some(function (x) { return x.gid === g.id; }) ? g.qty : 0;
+        return cut ? Object.assign({}, g, { qty: 0 }) : g;
+      }).filter(function (g) { return g.qty > 0; });
+      bestLv = { res: packPool(poolAll), sac0: sacList[0], leftover: sacList[0].n, level: sacList.length - 1 };
+    }
+    result = bestLv.res;
+    var lvNames = sacList.slice(0, bestLv.level + 1).map(function (x) { return x.nm; }).join('→');
+    toast('优先剩[' + lvNames + ']: ' + bestLv.sac0.nm + ' 剩' + bestLv.leftover + '箱(其余尽量全装)');
+    sacListBackfill = sacList; // 供回填
+    bestLvRef = bestLv;
   } else result = packPool(S.groups);
-  // 牺牲组回填: 排完后有空隙再塞几箱(可摞高)
-  if (sacInfo) {
-    var sg3 = S.groups[sacInfo.gid];
+  // 牺牲组回填: 排完后有空隙再塞几箱(可摞高); 逆序回填(先③后②再①, 让剩余尽量落在①)
+  if (sacListBackfill && bestLvRef) {
+    var sg3 = S.groups[sacListBackfill[sacListBackfill.length - 1].gid];
     var placedS = 0;
     result.containers.forEach(function (c8) {
       var f8 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
@@ -4530,30 +4560,47 @@ function runPack() {
       c8.freeBoxes = f8;
     });
     var cap8 = S.capVol != null ? S.capVol : L * W * H / 1e6;
-    var g8 = 0;
-    var leftS = (best || fallback).leftover; // 回填额度 = 当前剩余的牺牲组箱数
-    while (leftS > 0 && g8++ < 300) {
-      var placed8 = false;
-      for (var ci8 = 0; ci8 < result.containers.length && leftS > 0; ci8++) {
-        var c9 = result.containers[ci8];
-        var v9 = 0;
-        c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
-        if (cap8 * 1e6 - v9 < sg3.l * sg3.w * sg3.h) continue;
-        var pl8 = PackLib.fitPlacements(c9.freeBoxes || [], sg3.l, sg3.w, sg3.h, leftS, cap8 * 1e6 - v9, 0);
-        var ghost8 = c9.boxes.slice();
-        var ok8 = [];
-        pl8.forEach(function (p) {
-          if (PackLib.isSupported(p, ghost8)) { ok8.push(p); ghost8.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
-        });
-        if (!ok8.length) continue;
-        ok8.forEach(function (p) { c9.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg3.id, sku: sg3.skus[0].sku }); leftS--; placedS++; });
-        var f9 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
-        c9.boxes.forEach(function (b) { f9 = PackLib.clipFree(f9, [b]); });
-        c9.freeBoxes = f9;
-        placed8 = true;
+    result.containers.forEach(function (c8) {
+      var f8 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+      c8.boxes.forEach(function (b) { f8 = PackLib.clipFree(f8, [b]); });
+      c8.freeBoxes = f8;
+    });
+    // 各牺牲组当前未装数
+    var leftByG = {};
+    result.unplaced.forEach(function (u) { leftByG[u.id] = u.qty; });
+    for (var li = sacListBackfill.length - 1; li >= 0; li--) { // 逆序: 先回填低优先级
+      var sg3 = S.groups[sacListBackfill[li].gid];
+      var leftS = leftByG[sg3.id] || 0;
+      if (leftS <= 0) continue;
+      var g8 = 0;
+      while (leftS > 0 && g8++ < 300) {
+        var placed8 = false;
+        for (var ci8 = 0; ci8 < result.containers.length && leftS > 0; ci8++) {
+          var c9 = result.containers[ci8];
+          var v9 = 0;
+          c9.boxes.forEach(function (b) { v9 += b.l * b.w * b.h; });
+          if (cap8 * 1e6 - v9 < sg3.l * sg3.w * sg3.h) continue;
+          var pl8 = PackLib.fitPlacements(c9.freeBoxes || [], sg3.l, sg3.w, sg3.h, leftS, cap8 * 1e6 - v9, 0);
+          var ghost8 = c9.boxes.slice();
+          var ok8 = [];
+          pl8.forEach(function (p) {
+            if (PackLib.isSupported(p, ghost8)) { ok8.push(p); ghost8.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h }); }
+          });
+          if (!ok8.length) continue;
+          ok8.forEach(function (p) { c9.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: sg3.id, sku: sg3.skus[0].sku }); leftS--; });
+          var f9 = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+          c9.boxes.forEach(function (b) { f9 = PackLib.clipFree(f9, [b]); });
+          c9.freeBoxes = f9;
+          placed8 = true;
+        }
+        if (!placed8) break;
       }
-      if (!placed8) break;
+      leftByG[sg3.id] = leftS;
     }
+    result.unplaced = result.unplaced.filter(function (u) { return (leftByG[u.id] != null ? leftByG[u.id] : u.qty) > 0; });
+    result.unplaced.forEach(function (u) { if (leftByG[u.id] != null) u.qty = leftByG[u.id]; });
+    sacListBackfill = null;
+    bestLvRef = null;
   }
   S.result = result;
   // 剥碎保险(双保险): 某柜某SKU≤5箱且订单量>5 → 移出为未装
