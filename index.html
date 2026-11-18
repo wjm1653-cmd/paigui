@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.22">
+<html lang="zh-CN" data-ver="2026.1118.1">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.22</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag"></span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -4053,7 +4053,66 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     return items;
   }
 
+  /* ---------- 贴合压实: 消除列间竖缝 ----------
+     按从里到外、从下到上顺序逐箱向 -y / -x / -z 滑动(5cm步进), 全碰撞+支撑校验。
+     分散的窄竖缝被合并为门口一块完整空区, 箱子彼此紧贴(运输不晃动), 且为后续回填腾出可用空间。 */
+  function compactPass(c, cont) {
+    var L = cont ? cont.L : 1195, W = cont ? cont.W : 235, H = cont ? cont.H : 265;
+    var boxes = c.boxes;
+    var order = boxes.slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x) || (a.z - b.z) || 0; });
+    function overlap(o, t) {
+      return o.x < t.x + t.l - 0.5 && o.x + o.l > t.x + 0.5 &&
+        o.y < t.y + t.w - 0.5 && o.y + o.w > t.y + 0.5 &&
+        o.z < t.z + t.h - 0.5 && o.z + o.h > t.z + 0.5;
+    }
+    function trySlide(b, axis, delta) {
+      var t = { x: b.x, y: b.y, z: b.z, l: b.l, w: b.w, h: b.h };
+      t[axis] += delta;
+      if (t[axis] < -0.01) return false;
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i] === b) continue;
+        if (overlap(boxes[i], t)) return false;
+      }
+      // 临时应用, 校验自身支撑 + 上方依赖箱支撑不被破坏
+      var keep = b[axis];
+      b[axis] = Math.round(t[axis] * 10) / 10;
+      var ok2 = true;
+      if (b.z > 0.01 && !isSupported(b, boxes)) ok2 = false;
+      if (ok2) {
+        for (var j = 0; j < boxes.length; j++) {
+          var dp = boxes[j];
+          if (dp === b || dp.z <= b.z + b.h - 0.05) continue;
+          if (Math.abs(dp.z - (b.z + b.h)) < 0.05 &&
+            dp.x < t.x + t.l + 0.01 && dp.x + dp.l > t.x - 0.01 &&
+            dp.y < t.y + t.w + 0.01 && dp.y + dp.w > t.y - 0.01) {
+            if (!isSupported(dp, boxes)) { ok2 = false; break; }
+          }
+        }
+      }
+      if (!ok2) { b[axis] = keep; return false; }
+      return true;
+    }
+    // 多轮压实直到稳定: 每轮先按 -y 再 -x 再 -z 下沉(顺序: 里侧、底层优先)
+    for (var round = 0; round < 4; round++) {
+      var moved = false;
+      for (var k = 0; k < order.length; k++) {
+        var b = order[k];
+        while (trySlide(b, 'y', -1)) { moved = true; }
+        while (trySlide(b, 'x', -1)) { moved = true; }
+        var tries = 0;
+        while (b.z > 0.01 && tries++ < 600 && trySlide(b, 'z', -1)) { moved = true; }
+      }
+      if (!moved) break;
+    }
+    // 重算自由空间
+    var f = [{ x: 0, y: 0, z: 0, l: L, w: W, h: H }];
+    boxes.forEach(function (b2) { f = clipFree(f, [b2]); });
+    c.freeBoxes = f;
+    return c;
+  }
+
   return {
+    compactPass: compactPass,
     tileCount: tileCount,
     tilePlacements: tilePlacements,
     packContainer: packContainer,
@@ -4744,6 +4803,69 @@ function runPack() {
     })();
     S._droppedInfo = dropped;
   })();
+
+  // 贴合压实: 消除列间竖缝(箱子紧挨码放, 分散空隙合并到门口), 并利用合并后的整块空区回填未装箱
+  (function compactAndBackfill() {
+    var cont = S.cont || { L: 1195, W: 235, H: 265 };
+    S.result.containers.forEach(function (c) { PackLib.compactPass(c, cont); });
+    var placedNow = {};
+    S.result.containers.forEach(function (c) { c.boxes.forEach(function (b) { placedNow[b.g] = (placedNow[b.g] || 0) + 1; }); });
+    var capBk = S.capVol != null ? S.capVol * 1e6 : null;
+    S.groups.forEach(function (g) {
+      var rem = g.qty - (placedNow[g.id] || 0);
+      if (rem <= 0) return;
+      for (var ci = 0; ci < S.result.containers.length; ci++) {
+        var c2 = S.result.containers[ci];
+        var used = c2.boxes.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
+        var pl = PackLib.fitPlacements(c2.freeBoxes || [], g.l, g.w, g.h, rem,
+          capBk != null ? capBk - used : null, 0).filter(function (p) { return PackLib.isSupported(p, c2.boxes); });
+        for (var pi = 0; pi < pl.length; pi++) {
+          var p = pl[pi];
+          c2.boxes.push({ x: p.x, y: p.y, z: p.z, l: p.l, w: p.w, h: p.h, g: g.id });
+          placedNow[g.id] = (placedNow[g.id] || 0) + 1;
+        }
+        if (pl.length) {
+          var f2 = [{ x: 0, y: 0, z: 0, l: cont.L, w: cont.W, h: cont.H }];
+          c2.boxes.forEach(function (b) { f2 = PackLib.clipFree(f2, [b]); });
+          c2.freeBoxes = f2;
+        }
+        rem = g.qty - (placedNow[g.id] || 0);
+        if (rem <= 0) break;
+      }
+    });
+    // 更新未装清单
+    S.result.unplaced = [];
+    S.groups.forEach(function (g) {
+      var miss = g.qty - (placedNow[g.id] || 0);
+      if (miss > 0) S.result.unplaced.push({ id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: miss });
+    });
+    // 保险: 压实回填若产生 ≤5 箱碎片, 整组移除
+    (function stripFrag() {
+      var cnt = {};
+      S.result.containers.forEach(function (c) { c.boxes.forEach(function (b) { cnt[b.g] = (cnt[b.g] || 0) + 1; }); });
+      S.groups.forEach(function (g) {
+        var n = cnt[g.id] || 0;
+        if (n > 0 && n <= 5 && g.qty > 5) {
+          S.result.containers.forEach(function (c) {
+            c.boxes = c.boxes.filter(function (b) { return b.g !== g.id; });
+            var f3 = [{ x: 0, y: 0, z: 0, l: cont.L, w: cont.W, h: cont.H }];
+            c.boxes.forEach(function (b) { f3 = PackLib.clipFree(f3, [b]); });
+            c.freeBoxes = f3;
+          });
+          S.result.unplaced.push({ id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: g.qty - (0) });
+        }
+      });
+      // 重算 unplaced 数量(按实际装了多少)
+      var cnt2 = {};
+      S.result.containers.forEach(function (c) { c.boxes.forEach(function (b) { cnt2[b.g] = (cnt2[b.g] || 0) + 1; }); });
+      S.result.unplaced = [];
+      S.groups.forEach(function (g) {
+        var miss = g.qty - (cnt2[g.id] || 0);
+        if (miss > 0) S.result.unplaced.push({ id: g.id, spu: g.spu, skus: g.skus, l: g.l, w: g.w, h: g.h, qty: miss });
+      });
+    })();
+  })();
+
   processResult();
   // 初始化手动分柜矩阵
 
@@ -6077,6 +6199,8 @@ function loadShareData(d) {
     });
   }
   S.result = { containers: boxes, unplaced: (d.u || []).map(function (u, i) { return { id: u[0], spu: (d.ul || [])[i] || ('#' + u[0]), skus: [], l: 1, w: 1, h: 1, qty: u[1] }; }) };
+  // 旧方案打开时同样贴合压实, 消除竖缝显示
+  try { S.result.containers.forEach(function (c) { PackLib.compactPass(c, S.cont); }); } catch (e) { }
   processResult();
   // 重算利用率/用长
   S.result.containers.forEach(function (c) {
@@ -6347,6 +6471,7 @@ function checkNewerVersion() {
   } catch (e) { }
 }
 function init() {
+  var vt = $('verTag'); if (vt) vt.textContent = 'v' + (document.documentElement.getAttribute('data-ver') || '?');
   S.spuMap = EMBEDDED_DATA.mapping || {};
   S.spuSource = '内置';
   var cached = loadCachedSpuMap();
