@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-ver="2026.1116.19">
+<html lang="zh-CN" data-ver="2026.1116.20">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能排柜工具 v2026.1116.19</title>
+<title>智能排柜工具 v2026.1116.20</title>
 <style>
 :root {
   --bg: #eef1f5; --panel: #ffffff; --panel2: #f6f8fb; --line: #d9e0e8;
@@ -289,7 +289,7 @@ table.dt .sku-list { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.19</span></div>
+  <div class="brand">📦 智能排柜工具 <span class="sub">Container Loading Planner</span> <span class="ver" id="verTag">v2026.1116.20</span></div>
   <div class="top-actions">
     <button id="btnImportPlan" class="btn ghost" title="打开.pg.json方案文件(如同事发来的或之前导出的)">📂 导入方案</button>
 <button id="btnExportTop" class="btn ghost" disabled>📥 导出Excel</button>
@@ -1710,7 +1710,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         if (px >= s.x && px <= s.x + s.l && py >= s.y && py <= s.y + s.w) { hit++; break; }
       }
     }
-    return hit / (N * N) >= 0.6;  }
+    return hit / (N * N) >= 0.85;  }
 
   /* ---------- 单柜排柜 ---------- */
   function packContainer(container, groups, opts) {
@@ -1919,7 +1919,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           if (px >= t.x && px <= t.x + t.l && py >= t.y && py <= t.y + t.w) { hit++; break; }
         }
       }
-      return hit / (N * N) >= 0.6;
+      return hit / (N * N) >= 0.85;
     }
     function collides(x, y, z, l, w, h) {
       for (var i = 0; i < boxes.length; i++) {
@@ -2023,7 +2023,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
               px >= c3.x && px <= c3.x + c3.l && py >= c3.y && py <= c3.y + c3.w) { hit++; break; }
           }
         }
-        return hit / (N * N) >= 0.3;    }
+        return hit / (N * N) >= 0.85;    }
       var fsX = new FreeSpace(L, W, H, 1);
       boxes.forEach(function (b) { fsX.place(b.x, b.y, b.z, b.l, b.w, b.h); });
       order.forEach(function (g) {
@@ -2229,7 +2229,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
           if (px >= t.x && px <= t.x + t.l && py >= t.y && py <= t.y + t.w) { hit++; break; }
         }
       }
-      return hit / (N * N) >= 0.6;
+      return hit / (N * N) >= 0.85;
     }
     function collides(x, y, z, l, w, h) {
       return boxes.some(function (c) {
@@ -2523,7 +2523,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             if (px >= t.x && px <= t.x + t.l && py >= t.y && py <= t.y + t.w) { hit++; break; }
           }
         }
-        return hit / (N * N) >= 0.6;
+        return hit / (N * N) >= 0.85;
       }
       function col2(x, y, z, l, w, h) {
         return boxes.some(function (c) {
@@ -2751,7 +2751,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             if (px >= t.x && px <= t.x + t.l && py >= t.y && py <= t.y + t.w) { hit++; break; }
           }
         }
-        return hit / (N * N) >= 0.6;
+        return hit / (N * N) >= 0.85;
       }
       var lastOf = {}; // 同组贴紧: 每组记录最后放置的箱
       var fillOrder = groups.slice().sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; });
@@ -3007,7 +3007,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
             if (px >= t.x && px <= t.x + t.l && py >= t.y && py <= t.y + t.w) { hit++; break; }
           }
         }
-        return hit / (N * N) >= 0.6;
+        return hit / (N * N) >= 0.85;
       }
       var lastOf = {}; // 同组贴紧: 每组记录最后放置的箱
       var fillOrder = groups.slice().sort(function (a, b) { return b.l * b.w * b.h - a.l * a.w * a.h; });
